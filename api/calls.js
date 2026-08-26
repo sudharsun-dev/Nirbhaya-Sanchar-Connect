@@ -1,24 +1,5 @@
-import { compare } from 'bcryptjs'
+import { getAuthenticatedUser } from './lib/auth.js'
 import { getSupabaseAdmin } from './lib/supabase.js'
-
-function readBearerToken(request) {
-  const header = request.headers?.authorization || request.headers?.Authorization || ''
-  if (!header.startsWith('Bearer ')) return null
-  return header.slice(7).trim()
-}
-
-async function getSessionUserId(supabase, token) {
-  if (!token) return null
-  const { data: sessions, error } = await supabase.from('sessions').select('user_id, token_hash, expires_at')
-  if (error) throw error
-  for (const session of sessions || []) {
-    const expiresAt = Date.parse(session.expires_at) || Number(session.expires_at)
-    if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) continue
-    const matches = await compare(token, session.token_hash)
-    if (matches) return session.user_id
-  }
-  return null
-}
 
 async function getUserMap(supabase, userIds) {
   if (!userIds.length) return {}
@@ -49,13 +30,16 @@ function normalizeCallRow(call, userMap) {
 export default async function handler(request, response) {
   if (request.method !== 'GET' && request.method !== 'POST') return response.status(405).json({ error: 'Method not allowed.' })
 
-  const token = readBearerToken(request)
-  if (!token) return response.status(401).json({ error: 'Authentication required.' })
-
   try {
     const supabase = getSupabaseAdmin()
-    const currentUserId = await getSessionUserId(supabase, token)
-    if (!currentUserId) return response.status(401).json({ error: 'Authentication required.' })
+    const auth = await getAuthenticatedUser(supabase, request)
+    console.info(`AUTH_HEADER_PRESENT=${auth.diagnostics.headerPresent}`)
+    console.info(`AUTH_TOKEN_PRESENT=${auth.diagnostics.tokenPresent}`)
+    console.info(`SESSION_FOUND=${auth.diagnostics.sessionFound}`)
+    console.info(`SESSION_EXPIRED=${auth.diagnostics.sessionExpired}`)
+    console.info(`CURRENT_USER_FOUND=${auth.diagnostics.currentUserFound}`)
+    if (!auth.userId) return response.status(401).json({ error: 'Authentication required.' })
+    const currentUserId = auth.userId
 
     if (request.method === 'GET') {
       const { data: rows, error } = await supabase

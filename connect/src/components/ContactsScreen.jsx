@@ -68,7 +68,7 @@ export default function ContactsScreen({ profile, onManualJoin, onLogout, onConn
     let active = true
     async function poll() {
       try {
-        const result = await getCalls(profile.id)
+        const result = await getCalls()
         if (active) {
           const now = Date.now()
           setCalls(result.calls)
@@ -111,7 +111,7 @@ export default function ContactsScreen({ profile, onManualJoin, onLogout, onConn
 
   async function act(callId, action) {
     try {
-      const result = await updateCall(callId, action, profile.id)
+      const result = await updateCall(callId, action)
       setCalls((current) => current.map((call) => call.id === callId ? result.call : call))
       if (action === 'accept') { addHistory({ id: result.call.id, name: result.call.caller.name, direction: 'incoming', time: Date.now() }); onConnected({ name: profile.name, roomName: result.call.roomName, callId: result.call.id }) }
       if (action === 'reject') setNotice('Call rejected.')

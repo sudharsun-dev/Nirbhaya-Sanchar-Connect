@@ -1,42 +1,20 @@
-import { compare } from 'bcryptjs'
+import { getAuthenticatedUser } from '../lib/auth.js'
 import { getSupabaseAdmin } from '../lib/supabase.js'
-
-function readBearerToken(request) {
-  const header = request.headers?.authorization || request.headers?.Authorization || ''
-  if (!header.startsWith('Bearer ')) return null
-  return header.slice(7).trim()
-}
-
-async function getSessionUserId(supabase, token) {
-  if (!token) return null
-  const { data: sessions, error } = await supabase.from('sessions').select('user_id, token_hash, expires_at')
-  if (error) throw error
-  for (const session of sessions || []) {
-    const expiresAt = Date.parse(session.expires_at) || Number(session.expires_at)
-    if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) continue
-    const matches = await compare(token, session.token_hash)
-    if (matches) {
-      console.info('SESSION_FOUND=true')
-      console.info('AUTHENTICATED_USER_ID_PRESENT=true')
-      return session.user_id
-    }
-  }
-  console.info('SESSION_FOUND=false')
-  console.info('AUTHENTICATED_USER_ID_PRESENT=false')
-  return null
-}
 
 export default async function handler(request, response) {
   if (request.method !== 'GET') return response.status(405).json({ error: 'Method not allowed.' })
 
-  const token = readBearerToken(request)
-  console.info(`AUTH_HEADER_PRESENT=${Boolean(token)}`)
-  if (!token) return response.status(401).json({ error: 'Authentication required.' })
-
   try {
     const supabase = getSupabaseAdmin()
-    const currentUserId = await getSessionUserId(supabase, token)
-    if (!currentUserId) return response.status(401).json({ error: 'Authentication required.' })
+    const auth = await getAuthenticatedUser(supabase, request)
+    console.info(`AUTH_HEADER_PRESENT=${auth.diagnostics.headerPresent}`)
+    console.info(`AUTH_TOKEN_PRESENT=${auth.diagnostics.tokenPresent}`)
+    console.info(`SESSION_FOUND=${auth.diagnostics.sessionFound}`)
+    console.info(`SESSION_EXPIRED=${auth.diagnostics.sessionExpired}`)
+    console.info(`CURRENT_USER_FOUND=${auth.diagnostics.currentUserFound}`)
+    if (!auth.userId) return response.status(401).json({ error: 'Authentication required.' })
+    const currentUserId = auth.userId
+    console.info('CONTACT_SEARCH_STARTED=true')
 
     const query = String(request.query?.q || '').trim().toLowerCase()
     if (!query) return response.status(200).json({ users: [] })
@@ -69,6 +47,7 @@ export default async function handler(request, response) {
         online_status: 'online',
       }))
 
+    console.info(`CONTACT_SEARCH_RESULT_COUNT=${safeUsers.length}`)
     return response.status(200).json({ users: safeUsers })
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown search error'

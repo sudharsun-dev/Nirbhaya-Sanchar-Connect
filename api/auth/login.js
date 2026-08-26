@@ -1,6 +1,7 @@
 import { compare, hash } from 'bcryptjs'
 import { generateSessionToken } from '../lib/store.js'
 import { getSupabaseAdmin } from '../lib/supabase.js'
+import { createSessionId } from '../lib/auth.js'
 
 export default async function handler(request, response) {
   if (request.method !== 'POST') return response.status(405).json({ error: 'Method not allowed.' })
@@ -44,6 +45,7 @@ export default async function handler(request, response) {
     const { error: sessionError } = await supabase
       .from('sessions')
       .insert({
+        id: createSessionId(),
         user_id: user.id,
         token_hash: sessionHash,
         created_at: Date.now(),

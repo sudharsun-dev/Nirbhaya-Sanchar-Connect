@@ -21,9 +21,9 @@ export function setSessionUser(user, token) {
   else localStorage.removeItem(TOKEN_KEY)
 }
 
-export function authenticatedRequest(path, options = {}) {
+export async function authenticatedRequest(path, options = {}) {
   const token = getAuthToken()
-  return fetch(path, {
+  const response = await fetch(path, {
     ...options,
     headers: {
       ...(options.body ? { 'Content-Type': 'application/json' } : {}),
@@ -31,6 +31,8 @@ export function authenticatedRequest(path, options = {}) {
       ...(options.headers || {}),
     },
   })
+  if (response.status === 401) console.warn('AUTHENTICATED_REQUEST_401=true')
+  return response
 }
 
 export function clearSessionUser() {
