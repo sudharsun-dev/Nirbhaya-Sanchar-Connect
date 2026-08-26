@@ -1,6 +1,7 @@
 {
   "name": "nirbhaya-sanchar-workspace",
   "private": true,
+  "type": "module",
   "dependencies": {
     "livekit-server-sdk": "^2.15.0"
   },
