@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import AuthScreen from './components/AuthScreen'
 import CallScreen from './components/CallScreen'
 import ContactsScreen from './components/ContactsScreen'
+import { clearSessionUser } from './services/auth'
 import { updateCall } from './services/signaling'
 import './App.css'
 
@@ -38,7 +39,7 @@ function App() {
         <img className="brand-logo" src="/nirbhaya-sanchar-logo.svg" alt="Nirbhaya Sanchar" />
         <small>BRUTE FORCE</small>
       </header>
-      {call ? <CallScreen {...call} onEnded={() => { if (call.callId) updateCall(call.callId, 'end', profile?.id).catch(() => {}); setCall(null) }} /> : profile ? <ContactsScreen profile={profile} onLogout={() => setProfile(null)} onManualJoin={() => setProfile(null)} onConnected={setCall} /> : <AuthScreen onAuthenticated={setProfile} onManualJoin={() => setProfile(null)} />}
+      {call ? <CallScreen {...call} onEnded={() => { if (call.callId) updateCall(call.callId, 'end', profile?.id).catch(() => {}); setCall(null) }} /> : profile ? <ContactsScreen profile={profile} onLogout={() => { clearSessionUser(); setProfile(null) }} onManualJoin={() => { clearSessionUser(); setProfile(null) }} onConnected={setCall} /> : <AuthScreen onAuthenticated={setProfile} onManualJoin={() => { clearSessionUser(); setProfile(null) }} />}
       <footer>PRIVATE VOICE CHANNEL <span aria-hidden="true">•</span> CONNECTIONS ARE ENCRYPTED IN TRANSIT</footer>
     </main>
   )

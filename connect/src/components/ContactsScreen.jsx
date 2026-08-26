@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { createCall, getCalls, updateCall } from '../services/signaling'
+import { getAuthToken } from '../services/auth'
 
 function displayTime(value) {
   return new Date(value).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
@@ -38,7 +39,11 @@ export default function ContactsScreen({ profile, onManualJoin, onLogout, onConn
 
   const loadContacts = useCallback(async () => {
     try {
-      const response = await fetch(`/api/contacts?userId=${encodeURIComponent(profile.id)}`)
+      const response = await fetch(`/api/contacts?userId=${encodeURIComponent(profile.id)}`, {
+        headers: {
+          Authorization: `Bearer ${getAuthToken()}`,
+        },
+      })
       const result = await response.json().catch(() => ({ contacts: [] }))
       if (!response.ok) throw new Error(result.error || 'Unable to load contacts.')
       setContacts(result.contacts || [])
@@ -50,7 +55,11 @@ export default function ContactsScreen({ profile, onManualJoin, onLogout, onConn
   async function searchUsers() {
     if (!search.trim()) return setSearchResults([])
     try {
-      const response = await fetch(`/api/users/search?q=${encodeURIComponent(search.trim())}`)
+      const response = await fetch(`/api/users/search?q=${encodeURIComponent(search.trim())}`, {
+        headers: {
+          Authorization: `Bearer ${getAuthToken()}`,
+        },
+      })
       const result = await response.json().catch(() => ({ users: [] }))
       if (!response.ok) throw new Error(result.error || 'Search failed.')
       setSearchResults((result.users || []).filter((user) => user.id !== profile.id))
@@ -99,7 +108,10 @@ export default function ContactsScreen({ profile, onManualJoin, onLogout, onConn
     try {
       const response = await fetch('/api/contacts', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${getAuthToken()}`,
+        },
         body: JSON.stringify({ userId: profile.id, contactId: contact.id }),
       })
       const result = await response.json().catch(() => ({}))
