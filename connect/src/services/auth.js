@@ -18,6 +18,19 @@ export function getAuthToken() {
 export function setSessionUser(user, token) {
   localStorage.setItem(AUTH_KEY, JSON.stringify(user))
   if (token) localStorage.setItem(TOKEN_KEY, token)
+  else localStorage.removeItem(TOKEN_KEY)
+}
+
+export function authenticatedRequest(path, options = {}) {
+  const token = getAuthToken()
+  return fetch(path, {
+    ...options,
+    headers: {
+      ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(options.headers || {}),
+    },
+  })
 }
 
 export function clearSessionUser() {

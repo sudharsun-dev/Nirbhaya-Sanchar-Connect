@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import AuthScreen from './components/AuthScreen'
 import CallScreen from './components/CallScreen'
 import ContactsScreen from './components/ContactsScreen'
-import { clearSessionUser } from './services/auth'
+import { clearSessionUser, getAuthToken } from './services/auth'
 import { updateCall } from './services/signaling'
 import './App.css'
 
@@ -10,6 +10,7 @@ const PROFILE_KEY = 'nirbhaya-user-profile'
 
 function readStoredProfile() {
   try {
+    if (!getAuthToken()) return null
     const raw = localStorage.getItem(PROFILE_KEY)
     if (!raw) return null
     const parsed = JSON.parse(raw)

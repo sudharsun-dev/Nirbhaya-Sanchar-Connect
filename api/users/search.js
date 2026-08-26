@@ -9,12 +9,20 @@ function readBearerToken(request) {
 
 async function getSessionUserId(supabase, token) {
   if (!token) return null
-  const { data: sessions, error } = await supabase.from('sessions').select('user_id, token_hash')
+  const { data: sessions, error } = await supabase.from('sessions').select('user_id, token_hash, expires_at')
   if (error) throw error
   for (const session of sessions || []) {
+    const expiresAt = Date.parse(session.expires_at) || Number(session.expires_at)
+    if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) continue
     const matches = await compare(token, session.token_hash)
-    if (matches) return session.user_id
+    if (matches) {
+      console.info('SESSION_FOUND=true')
+      console.info('AUTHENTICATED_USER_ID_PRESENT=true')
+      return session.user_id
+    }
   }
+  console.info('SESSION_FOUND=false')
+  console.info('AUTHENTICATED_USER_ID_PRESENT=false')
   return null
 }
 
@@ -22,6 +30,7 @@ export default async function handler(request, response) {
   if (request.method !== 'GET') return response.status(405).json({ error: 'Method not allowed.' })
 
   const token = readBearerToken(request)
+  console.info(`AUTH_HEADER_PRESENT=${Boolean(token)}`)
   if (!token) return response.status(401).json({ error: 'Authentication required.' })
 
   try {

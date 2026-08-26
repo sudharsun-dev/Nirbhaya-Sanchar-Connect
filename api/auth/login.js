@@ -46,7 +46,8 @@ export default async function handler(request, response) {
       .insert({
         user_id: user.id,
         token_hash: sessionHash,
-        expires_at: new Date(Date.now() + 86400000).toISOString(),
+        created_at: Date.now(),
+        expires_at: Date.now() + 86400000,
       })
 
     if (sessionError) {
@@ -59,6 +60,9 @@ export default async function handler(request, response) {
       })
       return response.status(500).json({ error: 'Authentication service temporarily unavailable.' })
     }
+
+    console.info('AUTH_LOGIN_SUCCESS=true')
+    console.info('SESSION_CREATED=true')
 
     return response.status(200).json({
       user: {

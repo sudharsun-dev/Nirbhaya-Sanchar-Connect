@@ -1,7 +1,9 @@
+import { getAuthToken } from './auth'
+
 const apiBase = import.meta.env.DEV ? (import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001') : ''
 
 function tokenHeaders(extra = {}) {
-  const token = localStorage.getItem('nirbhaya-auth-token') || ''
+  const token = getAuthToken()
   return {
     'Content-Type': 'application/json',
     ...(token ? { Authorization: `Bearer ${token}` } : {}),

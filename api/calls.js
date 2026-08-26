@@ -9,9 +9,11 @@ function readBearerToken(request) {
 
 async function getSessionUserId(supabase, token) {
   if (!token) return null
-  const { data: sessions, error } = await supabase.from('sessions').select('user_id, token_hash')
+  const { data: sessions, error } = await supabase.from('sessions').select('user_id, token_hash, expires_at')
   if (error) throw error
   for (const session of sessions || []) {
+    const expiresAt = Date.parse(session.expires_at) || Number(session.expires_at)
+    if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) continue
     const matches = await compare(token, session.token_hash)
     if (matches) return session.user_id
   }

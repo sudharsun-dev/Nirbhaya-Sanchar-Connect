@@ -33,7 +33,9 @@ export default function AuthScreen({ onAuthenticated, onManualJoin }) {
       })
       const result = await response.json().catch(() => ({}))
       if (!response.ok) throw new Error(result.error || 'Authentication failed.')
+      if (mode === 'login' && !result.token) throw new Error('Authentication response did not include a session.')
       setSessionUser(result.user, result.token)
+      console.info(`AUTH_LOGIN_SESSION_STORED=${mode === 'login' && Boolean(result.token)}`)
       onAuthenticated(result.user)
     } catch (requestError) {
       setError(requestError.message)
