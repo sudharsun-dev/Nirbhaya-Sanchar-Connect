@@ -13,7 +13,7 @@ export default async function handler(request, response) {
     return response.status(400).json({ error: 'roomName and identity are required.' })
   }
   if (!process.env.LIVEKIT_URL?.startsWith('wss://') || !process.env.LIVEKIT_API_KEY || !process.env.LIVEKIT_API_SECRET) {
-    return response.status(500).json({ error: 'LiveKit server credentials are not configured.' })
+    return response.status(500).json({ error: 'LiveKit server credentials are not configured.', debug: { livekitUrlConfigured: false, apiKeyConfigured: false, apiSecretConfigured: false } })
   }
 
   try {
@@ -28,7 +28,7 @@ export default async function handler(request, response) {
       canSubscribe: true,
       canPublishData: false,
     })
-    return response.status(200).json({ token: await token.toJwt(), serverUrl: process.env.LIVEKIT_URL })
+    return response.status(200).json({ token: await token.toJwt(), serverUrl: process.env.LIVEKIT_URL, debug: { livekitUrlConfigured: true, apiKeyConfigured: true, apiSecretConfigured: true } })
   } catch (error) {
     console.error('Token generation failed:', error.message)
     return response.status(500).json({ error: 'Unable to create a LiveKit token.' })

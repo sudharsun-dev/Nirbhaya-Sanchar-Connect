@@ -20,7 +20,8 @@ export async function getLiveKitToken(roomName, identity) {
   }
   console.info('[TOKEN] response status:', response.status)
   const payload = await response.json().catch(() => ({}))
-  if (!response.ok || !payload.token || !payload.serverUrl) throw new Error('Unable to obtain call authorization.')
+  if (!response.ok) throw new Error(`Token API returned HTTP ${response.status}: ${payload.error || 'Unable to obtain call authorization.'}`)
+  if (!payload.token || !payload.serverUrl) throw new Error('Token API returned an incomplete authorization response.')
   console.info('[TOKEN] token received:', true)
   console.info('[TOKEN] serverUrl received:', true)
   return { token: payload.token, serverUrl: payload.serverUrl }
@@ -51,7 +52,7 @@ export async function connectToRoom(roomName, identity, handlers = {}) {
     await room.connect(authorization.serverUrl, token, { autoSubscribe: true })
   } catch (error) {
     room.disconnect()
-    if (error.message.startsWith('Token server') || error.message.startsWith('Unable to obtain') || error.message === 'Invalid LIVEKIT_URL') throw error
+    if (error.message.startsWith('Token server') || error.message.startsWith('Token API') || error.message === 'Invalid LIVEKIT_URL') throw error
     throw new Error('Unable to connect to the voice room.')
   }
   console.info('[LIVEKIT] connected')
