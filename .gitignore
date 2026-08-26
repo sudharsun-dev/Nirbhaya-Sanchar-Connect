@@ -1,0 +1,10 @@
+node_modules/
+dist/
+connect/node_modules/
+connect/dist/
+connect/.env
+connect/.env.*
+!connect/.env.example
+connect/server/.env
+!connect/server/.env.example
+*.log

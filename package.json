@@ -1,6 +1,9 @@
 {
   "name": "nirbhaya-sanchar-workspace",
   "private": true,
+  "dependencies": {
+    "livekit-server-sdk": "^2.15.0"
+  },
   "scripts": {
     "start": "npm run server",
     "dev": "npm --prefix connect run dev --",

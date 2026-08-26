@@ -1,0 +1,1 @@
+export { default } from '../connect/api/health.js'
