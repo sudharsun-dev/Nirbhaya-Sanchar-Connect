@@ -1,0 +1,12 @@
+{
+  "name": "nirbhaya-sanchar-workspace",
+  "private": true,
+  "scripts": {
+    "start": "npm run server",
+    "dev": "npm --prefix connect run dev --",
+    "server": "npm --prefix connect/server run start",
+    "build": "npm --prefix connect run build",
+    "lint": "npm --prefix connect run lint",
+    "preview": "npm --prefix connect run preview"
+  }
+}

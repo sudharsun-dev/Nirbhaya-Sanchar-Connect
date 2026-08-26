@@ -1,0 +1,3 @@
+export default function CallControls({ muted, onMute, onEnd }) {
+  return <div className="call-controls"><button className={muted ? 'control-button muted' : 'control-button'} onClick={onMute} aria-label={muted ? 'Unmute microphone' : 'Mute microphone'}><span>{muted ? '◉' : '◌'}</span>{muted ? 'UNMUTE' : 'MUTE'}</button><button className="end-button" onClick={onEnd}><span aria-hidden="true">×</span> END CALL</button></div>
+}

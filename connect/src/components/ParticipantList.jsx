@@ -1,0 +1,3 @@
+export default function ParticipantList({ participants }) {
+  return <div className="participant-list"><p className="section-label">IN THIS CALL <span>{participants.length}</span></p>{participants.map((participant) => <div className="participant" key={participant.identity}><div className="avatar">{participant.name.slice(0, 1).toUpperCase()}</div><div><strong>{participant.name}{participant.identity === 'local' ? ' (you)' : ''}</strong><small>{participant.identity === 'local' ? 'Microphone connected' : 'Voice participant'}</small></div><i className="voice-bars" aria-label="Audio connected"><b /><b /><b /></i></div>)}</div>
+}
