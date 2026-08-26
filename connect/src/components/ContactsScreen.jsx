@@ -85,7 +85,7 @@ export default function ContactsScreen({ profile, onManualJoin, onLogout, onConn
     if (calls.some((call) => [call.caller.id, call.receiver.id].includes(profile.id) && ['RINGING', 'CALLING', 'ACCEPTED'].includes(call.status))) return setNotice('You are already in a call.')
     setBusy(true)
     try {
-      const result = await createCall(profile, { id: contact.id, name: contact.name }, `nirbhaya-call-${crypto.randomUUID()}`)
+      const result = await createCall(contact.id)
       addHistory({ id: result.call.id, name: contact.name, direction: 'outgoing', time: Date.now() })
       setNotice(`Calling ${contact.name}...`)
     } catch (error) { setNotice(error.message) } finally { setBusy(false) }

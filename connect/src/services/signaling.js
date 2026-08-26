@@ -8,6 +8,12 @@ async function request(path, options = {}) {
   return body
 }
 
-export function createCall(caller, receiver, roomName) { return request('/api/calls', { method: 'POST', body: JSON.stringify({ caller, receiver, roomName }) }) }
+export function createCall(receiverId) {
+  const sessionUser = JSON.parse(localStorage.getItem('nirbhaya-user-profile') || 'null')
+  return request('/api/calls', {
+    method: 'POST',
+    body: JSON.stringify({ receiverId, callerId: sessionUser?.id || null }),
+  })
+}
 export function getCalls(userId) { return request(`/api/calls?userId=${encodeURIComponent(userId)}`) }
 export function updateCall(callId, action, userId) { return request('/api/calls', { method: 'POST', body: JSON.stringify({ callId, action, userId }) }) }
