@@ -3,7 +3,9 @@
   "private": true,
   "type": "module",
   "dependencies": {
+    "@supabase/supabase-js": "^2.112.4",
     "@vercel/postgres": "^0.10.0",
+    "bcryptjs": "^3.0.3",
     "livekit-server-sdk": "^2.15.0"
   },
   "scripts": {
