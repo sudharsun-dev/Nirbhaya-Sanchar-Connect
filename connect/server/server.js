@@ -25,7 +25,13 @@ app.use(cors({
 }))
 app.use(express.json())
 
-app.get('/health', (_request, response) => response.json({ status: 'ok' }))
+app.get('/health', (_request, response) => response.json({
+  status: 'ok',
+  service: 'nirbhaya-sanchar',
+  livekitUrlConfigured: Boolean(process.env.LIVEKIT_URL?.startsWith('wss://')),
+  apiKeyConfigured: Boolean(process.env.LIVEKIT_API_KEY),
+  apiSecretConfigured: Boolean(process.env.LIVEKIT_API_SECRET),
+}))
 
 app.post('/api/token', async (request, response) => {
   const { roomName, identity } = request.body || {}
@@ -52,7 +58,7 @@ app.post('/api/token', async (request, response) => {
       canPublishData: false,
     })
     console.info('[TOKEN SERVER] token generated successfully')
-    return response.json({ token: await token.toJwt() })
+    return response.json({ token: await token.toJwt(), serverUrl: process.env.LIVEKIT_URL })
   } catch (error) {
     console.error('Token generation failed:', error)
     return response.status(500).json({ error: 'Unable to create a LiveKit token.' })

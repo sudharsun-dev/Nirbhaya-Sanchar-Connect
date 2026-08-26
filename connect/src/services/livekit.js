@@ -4,7 +4,7 @@ function asElements(value) { return Array.isArray(value) ? value : value ? [valu
 
 export async function getLiveKitToken(roomName, identity) {
   if (!roomName || !identity) throw new Error('A room and display name are required.')
-  const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || ''
+  const apiBaseUrl = import.meta.env.DEV ? (import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001') : ''
   const apiUrl = `${apiBaseUrl.replace(/\/$/, '')}/api/token`
   console.info('[TOKEN] requesting token')
   console.info('[TOKEN] API URL:', apiUrl)
@@ -20,14 +20,13 @@ export async function getLiveKitToken(roomName, identity) {
   }
   console.info('[TOKEN] response status:', response.status)
   const payload = await response.json().catch(() => ({}))
-  if (!response.ok || !payload.token) throw new Error('Unable to obtain call authorization.')
-  console.info('[TOKEN] token received')
-  return payload.token
+  if (!response.ok || !payload.token || !payload.serverUrl) throw new Error('Unable to obtain call authorization.')
+  console.info('[TOKEN] token received:', true)
+  console.info('[TOKEN] serverUrl received:', true)
+  return { token: payload.token, serverUrl: payload.serverUrl }
 }
 
 export async function connectToRoom(roomName, identity, handlers = {}) {
-  const url = import.meta.env.VITE_LIVEKIT_URL
-  if (!url || !url.startsWith('wss://')) throw new Error('LiveKit connection failed. Check VITE_LIVEKIT_URL.')
   const room = new Room({ adaptiveStream: false, dynacast: false })
   room.on(RoomEvent.TrackSubscribed, (track) => {
     if (track.kind !== 'audio') return
@@ -46,11 +45,13 @@ export async function connectToRoom(roomName, identity, handlers = {}) {
   console.info('[LIVEKIT] connecting')
   let token
   try {
-    token = await getLiveKitToken(roomName, identity)
-    await room.connect(url, token, { autoSubscribe: true })
+    const authorization = await getLiveKitToken(roomName, identity)
+    if (!authorization.serverUrl.startsWith('wss://') || !authorization.serverUrl.includes('livekit.cloud')) throw new Error('Invalid LIVEKIT_URL')
+    token = authorization.token
+    await room.connect(authorization.serverUrl, token, { autoSubscribe: true })
   } catch (error) {
     room.disconnect()
-    if (error.message.startsWith('Token server') || error.message.startsWith('Unable to obtain')) throw error
+    if (error.message.startsWith('Token server') || error.message.startsWith('Unable to obtain') || error.message === 'Invalid LIVEKIT_URL') throw error
     throw new Error('Unable to connect to the voice room.')
   }
   console.info('[LIVEKIT] connected')
