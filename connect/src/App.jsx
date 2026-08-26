@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import JoinScreen from './components/JoinScreen'
+import AuthScreen from './components/AuthScreen'
 import CallScreen from './components/CallScreen'
 import ContactsScreen from './components/ContactsScreen'
 import { updateCall } from './services/signaling'
@@ -13,7 +13,7 @@ function readStoredProfile() {
     if (!raw) return null
     const parsed = JSON.parse(raw)
     if (!parsed || typeof parsed.name !== 'string' || !parsed.name.trim()) return null
-    return { id: parsed.id || parsed.name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'user', name: parsed.name.trim() }
+    return { id: parsed.id || parsed.name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'user', name: parsed.name.trim(), email: parsed.email || '', phone: parsed.phone || '', online_status: parsed.online_status || 'online', last_seen: parsed.last_seen || 0 }
   } catch {
     return null
   }
@@ -38,7 +38,7 @@ function App() {
         <img className="brand-logo" src="/nirbhaya-sanchar-logo.svg" alt="Nirbhaya Sanchar" />
         <small>BRUTE FORCE</small>
       </header>
-      {call ? <CallScreen {...call} onEnded={() => { if (call.callId) updateCall(call.callId, 'end', profile?.id).catch(() => {}); setCall(null) }} /> : profile ? <ContactsScreen profile={profile} onManualJoin={() => setProfile(null)} onConnected={setCall} /> : <JoinScreen onJoin={setCall} onContacts={setProfile} />}
+      {call ? <CallScreen {...call} onEnded={() => { if (call.callId) updateCall(call.callId, 'end', profile?.id).catch(() => {}); setCall(null) }} /> : profile ? <ContactsScreen profile={profile} onLogout={() => setProfile(null)} onManualJoin={() => setProfile(null)} onConnected={setCall} /> : <AuthScreen onAuthenticated={setProfile} onManualJoin={() => setProfile(null)} />}
       <footer>PRIVATE VOICE CHANNEL <span aria-hidden="true">•</span> CONNECTIONS ARE ENCRYPTED IN TRANSIT</footer>
     </main>
   )
