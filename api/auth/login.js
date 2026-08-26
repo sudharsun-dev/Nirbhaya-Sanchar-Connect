@@ -1,4 +1,4 @@
-import { loadStore, sanitizeUser, verifyPassword } from '../lib/store.js'
+import { generateSessionToken, loadStore, sanitizeUser, verifyPassword } from '../lib/store.js'
 
 export default function handler(request, response) {
   if (request.method !== 'POST') return response.status(405).json({ error: 'Method not allowed.' })
@@ -19,7 +19,10 @@ export default function handler(request, response) {
   const updated = { ...user }
   const index = store.users.findIndex((item) => item.id === user.id)
   if (index >= 0) store.users[index] = updated
+  const sessionToken = generateSessionToken()
+  store.sessions = store.sessions.filter((session) => session.userId !== user.id)
+  store.sessions.push({ token: sessionToken, userId: user.id, createdAt: Date.now() })
   saveStore(store)
 
-  return response.status(200).json({ user: sanitizeUser(updated) })
+  return response.status(200).json({ user: sanitizeUser(updated), token: sessionToken })
 }

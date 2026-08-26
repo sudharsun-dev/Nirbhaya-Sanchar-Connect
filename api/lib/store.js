@@ -16,11 +16,12 @@ export function loadStore() {
   if (globalThis.__nirbhayaStore) return globalThis.__nirbhayaStore
   ensureFile()
   const raw = fs.readFileSync(STORE_PATH, 'utf8')
-  const parsed = JSON.parse(raw || '{"users":[],"contacts":[],"calls":[]}')
+  const parsed = JSON.parse(raw || '{"users":[],"contacts":[],"calls":[],"sessions":[]}')
   const store = {
     users: Array.isArray(parsed.users) ? parsed.users : [],
     contacts: Array.isArray(parsed.contacts) ? parsed.contacts : [],
     calls: Array.isArray(parsed.calls) ? parsed.calls : [],
+    sessions: Array.isArray(parsed.sessions) ? parsed.sessions : [],
   }
   globalThis.__nirbhayaStore = store
   return store
@@ -44,6 +45,10 @@ export function generateCallId() {
 
 export function generateRoomId(callId) {
   return `nirbhaya-call-${callId}`
+}
+
+export function generateSessionToken() {
+  return `ns_${crypto.randomUUID().replace(/-/g, '')}`
 }
 
 export function hashPassword(password) {

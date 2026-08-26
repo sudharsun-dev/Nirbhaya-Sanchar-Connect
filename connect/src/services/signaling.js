@@ -1,8 +1,25 @@
 const apiBase = import.meta.env.DEV ? (import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001') : ''
 
+function tokenHeaders(extra = {}) {
+  const token = localStorage.getItem('nirbhaya-auth-token') || ''
+  return {
+    'Content-Type': 'application/json',
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...extra,
+  }
+}
+
 async function request(path, options = {}) {
+  const requestHeaders = { ...tokenHeaders(), ...(options.headers || {}) }
   let response
-  try { response = await fetch(`${apiBase}${path}`, { headers: { 'Content-Type': 'application/json' }, ...options }) } catch { throw new Error('Signaling service unavailable.') }
+  try {
+    response = await fetch(`${apiBase}${path}`, {
+      ...options,
+      headers: requestHeaders,
+    })
+  } catch {
+    throw new Error('Signaling service unavailable.')
+  }
   const body = await response.json().catch(() => ({}))
   if (!response.ok) throw new Error(body.error || 'Signaling request failed.')
   return body

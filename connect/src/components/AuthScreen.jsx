@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { setSessionUser } from '../services/auth'
 
 export default function AuthScreen({ onAuthenticated, onManualJoin }) {
   const [mode, setMode] = useState('login')
@@ -32,7 +33,7 @@ export default function AuthScreen({ onAuthenticated, onManualJoin }) {
       })
       const result = await response.json().catch(() => ({}))
       if (!response.ok) throw new Error(result.error || 'Authentication failed.')
-      localStorage.setItem('nirbhaya-session', JSON.stringify(result.user))
+      setSessionUser(result.user, result.token)
       onAuthenticated(result.user)
     } catch (requestError) {
       setError(requestError.message)

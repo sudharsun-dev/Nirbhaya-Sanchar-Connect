@@ -5,6 +5,10 @@ function displayTime(value) {
   return new Date(value).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
 }
 
+function normalizeStatus(value) {
+  return String(value || '').toLowerCase()
+}
+
 function readHistory() {
   try {
     return JSON.parse(localStorage.getItem('nirbhaya-history') || '[]')
@@ -22,8 +26,8 @@ export default function ContactsScreen({ profile, onManualJoin, onLogout, onConn
   const [search, setSearch] = useState('')
   const [searchResults, setSearchResults] = useState([])
 
-  const incoming = calls.find((call) => call.receiver.id === profile.id && ['RINGING', 'CALLING'].includes(call.status))
-  const outgoing = calls.find((call) => call.caller.id === profile.id && ['RINGING', 'CALLING'].includes(call.status))
+  const incoming = calls.find((call) => call.receiver.id === profile.id && ['ringing', 'calling'].includes(normalizeStatus(call.status)))
+  const outgoing = calls.find((call) => call.caller.id === profile.id && ['ringing', 'calling'].includes(normalizeStatus(call.status)))
 
   function addHistory(entry) {
     if (history.some((item) => item.id === entry.id)) return
@@ -67,9 +71,9 @@ export default function ContactsScreen({ profile, onManualJoin, onLogout, onConn
         if (active) {
           const now = Date.now()
           setCalls(result.calls)
-          const changed = result.calls.find((call) => call.caller.id === profile.id && ['REJECTED', 'CANCELLED', 'ENDED'].includes(call.status))
-          if (changed && changed.updatedAt > now - 2500) setNotice(changed.status === 'REJECTED' ? `${changed.receiver.name} rejected the call.` : 'Call ended.')
-          const accepted = result.calls.find((call) => call.caller.id === profile.id && call.status === 'ACCEPTED')
+          const changed = result.calls.find((call) => call.caller.id === profile.id && ['rejected', 'cancelled', 'ended'].includes(normalizeStatus(call.status)))
+          if (changed && changed.updatedAt > now - 2500) setNotice(normalizeStatus(changed.status) === 'rejected' ? `${changed.receiver.name} rejected the call.` : 'Call ended.')
+          const accepted = result.calls.find((call) => call.caller.id === profile.id && normalizeStatus(call.status) === 'accepted')
           if (accepted) onConnected({ name: profile.name, roomName: accepted.roomName, callId: accepted.id })
         }
       } catch (error) { if (active) setNotice(error.message) }
@@ -82,7 +86,7 @@ export default function ContactsScreen({ profile, onManualJoin, onLogout, onConn
   async function callContact(contact) {
     const online = contact.online_status !== 'offline'
     if (!online) return setNotice('User is currently unavailable.')
-    if (calls.some((call) => [call.caller.id, call.receiver.id].includes(profile.id) && ['RINGING', 'CALLING', 'ACCEPTED'].includes(call.status))) return setNotice('You are already in a call.')
+    if (calls.some((call) => [call.caller.id, call.receiver.id].includes(profile.id) && ['ringing', 'calling', 'accepted'].includes(normalizeStatus(call.status)))) return setNotice('You are already in a call.')
     setBusy(true)
     try {
       const result = await createCall(contact.id)
@@ -109,7 +113,7 @@ export default function ContactsScreen({ profile, onManualJoin, onLogout, onConn
     try {
       const result = await updateCall(callId, action, profile.id)
       setCalls((current) => current.map((call) => call.id === callId ? result.call : call))
-      if (action === 'accept') { addHistory({ id: result.call.id, name: result.call.caller.name, direction: 'incoming', time: Date.now() }); onConnected({ name: profile.name, roomName: result.call.roomName, callId }) }
+      if (action === 'accept') { addHistory({ id: result.call.id, name: result.call.caller.name, direction: 'incoming', time: Date.now() }); onConnected({ name: profile.name, roomName: result.call.roomName, callId: result.call.id }) }
       if (action === 'reject') setNotice('Call rejected.')
     } catch (error) { setNotice(error.message) }
   }

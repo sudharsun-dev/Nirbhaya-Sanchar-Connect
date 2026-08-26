@@ -2,6 +2,19 @@ import { generateCallId, generateRoomId, loadStore, saveStore } from './lib/stor
 
 const now = () => Date.now()
 
+function getSessionToken(request) {
+  const authorization = request.headers?.authorization || request.headers?.Authorization || ''
+  if (authorization.startsWith('Bearer ')) return authorization.slice(7).trim()
+  return String(request.headers?.['x-session-token'] || request.headers?.['X-Session-Token'] || '')
+}
+
+function getSessionUserId(store, request) {
+  const token = getSessionToken(request)
+  if (!token) return null
+  const session = store.sessions.find((entry) => entry.token === token)
+  return session?.userId || null
+}
+
 function normalizeCall(call, store) {
   if (!call) return null
   const caller = store.users.find((user) => user.id === call.callerId)
@@ -23,9 +36,9 @@ export default function handler(request, response) {
   const store = loadStore()
 
   if (request.method === 'GET') {
-    const userId = String(request.query?.userId || '')
+    const currentUserId = getSessionUserId(store, request) || String(request.query?.userId || '')
     const items = store.calls
-      .filter((call) => [call.callerId, call.receiverId].includes(userId))
+      .filter((call) => [call.callerId, call.receiverId].includes(currentUserId))
       .filter((call) => now() - call.updatedAt < 120000)
       .map((call) => normalizeCall(call, store))
       .filter(Boolean)
@@ -34,11 +47,14 @@ export default function handler(request, response) {
 
   if (request.method !== 'POST') return response.status(405).json({ error: 'Method not allowed.' })
 
-  const { callId, action, userId } = request.body || {}
-  if (callId && action && userId) {
+  const currentUserId = getSessionUserId(store, request)
+  const { callId, action, userId, receiverId, callerId } = request.body || {}
+
+  if (callId && action) {
     const call = store.calls.find((item) => item.id === callId)
     const transitions = { accept: ['ringing', 'accepted'], reject: ['ringing', 'rejected'], cancel: ['calling', 'cancelled'], end: ['accepted', 'ended'] }
-    if (!call || ![call.callerId, call.receiverId].includes(userId)) return response.status(404).json({ error: 'Call not found.' })
+    if (!currentUserId) return response.status(401).json({ error: 'Authentication required.' })
+    if (!call || ![call.callerId, call.receiverId].includes(currentUserId)) return response.status(404).json({ error: 'Call not found.' })
     if (!transitions[action]?.includes(call.status)) return response.status(409).json({ error: 'Call is no longer active.' })
     call.status = transitions[action][1]
     call.updatedAt = Date.now()
@@ -46,10 +62,10 @@ export default function handler(request, response) {
     return response.status(200).json({ call: normalizeCall(call, store) })
   }
 
-  const { callerId, receiverId } = request.body || {}
+  if (!currentUserId) return response.status(401).json({ error: 'Authentication required.' })
   if (!receiverId) return response.status(400).json({ error: 'receiverId is required.' })
 
-  const caller = store.users.find((user) => user.id === callerId)
+  const caller = store.users.find((user) => user.id === currentUserId)
   const receiver = store.users.find((user) => user.id === receiverId)
   if (!caller || !receiver) return response.status(404).json({ error: 'Caller or receiver not found.' })
   if (caller.id === receiver.id) return response.status(400).json({ error: 'A user cannot call themselves.' })

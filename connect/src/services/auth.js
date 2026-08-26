@@ -1,4 +1,5 @@
 const AUTH_KEY = 'nirbhaya-session'
+const TOKEN_KEY = 'nirbhaya-auth-token'
 
 export function getSessionUser() {
   try {
@@ -10,12 +11,18 @@ export function getSessionUser() {
   }
 }
 
-export function setSessionUser(user) {
+export function getAuthToken() {
+  return localStorage.getItem(TOKEN_KEY) || ''
+}
+
+export function setSessionUser(user, token) {
   localStorage.setItem(AUTH_KEY, JSON.stringify(user))
+  if (token) localStorage.setItem(TOKEN_KEY, token)
 }
 
 export function clearSessionUser() {
   localStorage.removeItem(AUTH_KEY)
+  localStorage.removeItem(TOKEN_KEY)
 }
 
 export async function registerUser(payload) {

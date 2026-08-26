@@ -1,4 +1,4 @@
-import { generateUserId, hashPassword, loadStore, sanitizeUser, saveStore } from '../lib/store.js'
+import { generateSessionToken, generateUserId, hashPassword, loadStore, sanitizeUser, saveStore } from '../lib/store.js'
 
 export default function handler(request, response) {
   if (request.method !== 'POST') return response.status(405).json({ error: 'Method not allowed.' })
@@ -25,8 +25,10 @@ export default function handler(request, response) {
     created_at: Date.now(),
   }
 
+  const sessionToken = generateSessionToken()
   store.users.push(user)
+  store.sessions.push({ token: sessionToken, userId: user.id, createdAt: Date.now() })
   saveStore(store)
 
-  return response.status(201).json({ user: sanitizeUser(user) })
+  return response.status(201).json({ user: sanitizeUser(user), token: sessionToken })
 }
