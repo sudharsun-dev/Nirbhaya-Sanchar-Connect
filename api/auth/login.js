@@ -40,7 +40,7 @@ export default async function handler(request, response) {
     }
 
     const sessionToken = generateSessionToken()
-    const sessionHash = hash(sessionToken, 12)
+    const sessionHash = await hash(sessionToken, 12)
     const { error: sessionError } = await supabase
       .from('sessions')
       .insert({
