@@ -5,89 +5,6 @@ export function hasDatabaseConfig() {
   return Boolean(process.env.DATABASE_URL || process.env.POSTGRES_URL || process.env.POSTGRES_PRISMA_URL)
 }
 
-export function generateUserId() {
-  const number = (Math.floor(Math.random() * 90000) + 10000).toString()
-  return `NS${number}`
-}
-
-export function generateCallId() {
-  return `CALL-${crypto.randomUUID().slice(0, 8).toUpperCase()}`
-}
-
-export function generateRoomId(callId) {
-  return `nirbhaya-call-${callId}`
-}
-
-export function generateSessionToken() {
-  return `ns_${crypto.randomUUID().replace(/-/g, '')}`
-}
-
-export function hashToken(token) {
-  return crypto.createHash('sha256').update(String(token)).digest('hex')
-}
-
-export function hashPassword(password) {
-  const salt = crypto.randomBytes(16).toString('hex')
-  const hash = crypto.pbkdf2Sync(password, salt, 100000, 64, 'sha512').toString('hex')
-  return `${salt}:${hash}`
-}
-
-export function verifyPassword(password, storedValue) {
-  if (!storedValue || typeof storedValue !== 'string') return false
-  const [salt, hash] = storedValue.split(':')
-  if (!salt || !hash) return false
-  const generated = crypto.pbkdf2Sync(password, salt, 100000, 64, 'sha512').toString('hex')
-  return crypto.timingSafeEqual(Buffer.from(hash, 'hex'), Buffer.from(generated, 'hex'))
-}
-
-export function normalizeUserRow(row) {
-  return {
-    id: row.id,
-    name: row.name,
-    phone: row.phone,
-    email: row.email,
-    password_hash: row.password_hash,
-    profile_photo: row.profile_photo || '',
-    online_status: row.online_status || 'online',
-    last_seen: Number(row.last_seen || row.created_at || Date.now()),
-    created_at: Number(row.created_at || Date.now()),
-  }
-}
-
-export function normalizeSessionRow(row) {
-  return {
-    id: row.id,
-    userId: row.user_id,
-    token: row.token_hash,
-    createdAt: Number(row.created_at || Date.now()),
-    expiresAt: Number(row.expires_at || Date.now() + 86400000),
-  }
-}
-
-export function normalizeContactRow(row) {
-  return {
-    id: row.id,
-    user_id: row.user_id,
-    contact_id: row.contact_user_id,
-    created_at: Number(row.created_at || Date.now()),
-  }
-}
-
-export function normalizeCallRow(row) {
-  return {
-    id: row.id,
-    callerId: row.caller_id,
-    receiverId: row.receiver_id,
-    roomId: row.room_id,
-    status: row.status,
-    createdAt: Number(row.created_at || Date.now()),
-    updatedAt: Number(row.updated_at || Date.now()),
-    answeredAt: row.answered_at ? Number(row.answered_at) : null,
-    endedAt: row.ended_at ? Number(row.ended_at) : null,
-    duration: Number(row.duration || 0),
-  }
-}
-
 export async function ensureSchema() {
   if (!hasDatabaseConfig()) {
     throw new Error('Database configuration is missing.')
@@ -137,14 +54,67 @@ export async function ensureSchema() {
       updated_at BIGINT NOT NULL DEFAULT 0,
       answered_at BIGINT,
       ended_at BIGINT,
-      duration INTEGER NOT NULL DEFAULT 0
+      duration INTEGER DEFAULT 0
     )
   `
 
   await sql`CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)`
   await sql`CREATE INDEX IF NOT EXISTS idx_users_phone ON users(phone)`
   await sql`CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id)`
-  await sql`CREATE INDEX IF NOT EXISTS idx_calls_user_pair ON calls(caller_id, receiver_id)`
+  await sql`CREATE INDEX IF NOT EXISTS idx_calls_users ON calls(caller_id, receiver_id)`
+}
+
+function asNumber(value, fallback = Date.now()) {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : fallback
+}
+
+export function normalizeUserRow(row) {
+  return {
+    id: row.id,
+    name: row.name,
+    phone: row.phone,
+    email: row.email,
+    password_hash: row.password_hash,
+    profile_photo: row.profile_photo || '',
+    online_status: row.online_status || 'online',
+    last_seen: asNumber(row.last_seen, row.created_at || Date.now()),
+    created_at: asNumber(row.created_at, Date.now()),
+  }
+}
+
+export function normalizeContactRow(row) {
+  return {
+    id: row.id,
+    user_id: row.user_id,
+    contact_id: row.contact_user_id,
+    created_at: asNumber(row.created_at, Date.now()),
+  }
+}
+
+export function normalizeSessionRow(row) {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    token: row.token_hash,
+    createdAt: asNumber(row.created_at, Date.now()),
+    expiresAt: asNumber(row.expires_at, Date.now()),
+  }
+}
+
+export function normalizeCallRow(row) {
+  return {
+    id: row.id,
+    callerId: row.caller_id,
+    receiverId: row.receiver_id,
+    roomId: row.room_id,
+    status: row.status,
+    createdAt: asNumber(row.created_at, Date.now()),
+    updatedAt: asNumber(row.updated_at, Date.now()),
+    answeredAt: row.answered_at ? asNumber(row.answered_at, Date.now()) : null,
+    endedAt: row.ended_at ? asNumber(row.ended_at, Date.now()) : null,
+    duration: Number(row.duration || 0),
+  }
 }
 
 export async function loadStore() {
@@ -173,7 +143,7 @@ export async function saveStore(store) {
   for (const session of store.sessions || []) {
     await sql`
       INSERT INTO sessions (id, user_id, token_hash, created_at, expires_at)
-      VALUES (${session.id || crypto.randomUUID()}, ${session.userId}, ${session.token ? hashToken(session.token) : session.token}, ${Number(session.createdAt || Date.now())}, ${Number(session.expiresAt || Date.now() + 86400000)})
+      VALUES (${session.id || crypto.randomUUID()}, ${session.userId}, ${session.token}, ${Number(session.createdAt || Date.now())}, ${Number(session.expiresAt || Date.now() + 86400000)})
     `
   }
 
@@ -223,18 +193,4 @@ export async function saveStore(store) {
   }
 
   return store
-}
-
-export function sanitizeUser(user) {
-  if (!user) return null
-  return {
-    id: user.id,
-    name: user.name,
-    phone: user.phone,
-    email: user.email,
-    profile_photo: user.profile_photo || '',
-    online_status: user.online_status || 'online',
-    last_seen: user.last_seen || user.created_at || Date.now(),
-    created_at: user.created_at || Date.now(),
-  }
 }

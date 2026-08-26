@@ -1,4 +1,5 @@
-import { generateCallId, generateRoomId, loadStore, saveStore } from './lib/store.js'
+import crypto from 'node:crypto'
+import { generateCallId, generateRoomId, hashToken, loadStore, saveStore } from './lib/store.js'
 
 const now = () => Date.now()
 
@@ -11,7 +12,8 @@ function getSessionToken(request) {
 function getSessionUserId(store, request) {
   const token = getSessionToken(request)
   if (!token) return null
-  const session = store.sessions.find((entry) => entry.token === token)
+  const hashed = hashToken(token)
+  const session = store.sessions.find((entry) => entry.token === hashed)
   return session?.userId || null
 }
 
@@ -32,8 +34,8 @@ function normalizeCall(call, store) {
   }
 }
 
-export default function handler(request, response) {
-  const store = loadStore()
+export default async function handler(request, response) {
+  const store = await loadStore()
 
   if (request.method === 'GET') {
     const currentUserId = getSessionUserId(store, request) || String(request.query?.userId || '')
@@ -48,7 +50,7 @@ export default function handler(request, response) {
   if (request.method !== 'POST') return response.status(405).json({ error: 'Method not allowed.' })
 
   const currentUserId = getSessionUserId(store, request)
-  const { callId, action, userId, receiverId, callerId } = request.body || {}
+  const { callId, action, receiverId } = request.body || {}
 
   if (callId && action) {
     const call = store.calls.find((item) => item.id === callId)
@@ -58,7 +60,7 @@ export default function handler(request, response) {
     if (!transitions[action]?.includes(call.status)) return response.status(409).json({ error: 'Call is no longer active.' })
     call.status = transitions[action][1]
     call.updatedAt = Date.now()
-    saveStore(store)
+    await saveStore(store)
     return response.status(200).json({ call: normalizeCall(call, store) })
   }
 
@@ -85,6 +87,6 @@ export default function handler(request, response) {
     updatedAt: now(),
   }
   store.calls.push(call)
-  saveStore(store)
+  await saveStore(store)
   return response.status(201).json({ call: normalizeCall(call, store) })
 }
