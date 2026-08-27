@@ -5,6 +5,16 @@ import CallControls from './CallControls'
 import ParticipantList from './ParticipantList'
 import ConnectionStatus from './ConnectionStatus'
 
+function formatScore(val, digits = 0) {
+  if (val === null || val === undefined || isNaN(Number(val))) return null;
+  return Number(val).toFixed(digits);
+}
+
+function formatPercent(val, digits = 1) {
+  if (val === null || val === undefined || isNaN(Number(val))) return null;
+  return Number(val).toFixed(digits);
+}
+
 export default function CallScreen({ name, roomName, callId, onEnded }) {
   const [status, setStatus] = useState('connecting')
   const [muted, setMuted] = useState(false)
@@ -189,8 +199,9 @@ export default function CallScreen({ name, roomName, callId, onEnded }) {
   }
 
   // Determine Security Badge Colors
-  const isHighRisk = securityState.riskLevel === 'HIGH' || (securityState.riskScore !== null && securityState.riskScore >= 70)
-  const isMediumRisk = securityState.riskLevel === 'MEDIUM' || (securityState.riskScore !== null && securityState.riskScore >= 30 && securityState.riskScore < 70)
+  const riskVal = securityState.riskScore !== null && !isNaN(Number(securityState.riskScore)) ? Number(securityState.riskScore) : null
+  const isHighRisk = securityState.riskLevel === 'HIGH' || (riskVal !== null && riskVal >= 70)
+  const isMediumRisk = securityState.riskLevel === 'MEDIUM' || (riskVal !== null && riskVal >= 30 && riskVal < 70)
 
   return (
     <section className="call-layout">
@@ -217,8 +228,8 @@ export default function CallScreen({ name, roomName, callId, onEnded }) {
           </div>
           <div className="hud-info">
             <strong>
-              {securityState.riskScore !== null
-                ? `AI Security: Risk ${securityState.riskScore.toFixed(0)}/100 (${securityState.riskLevel})`
+              {formatScore(securityState.riskScore, 0) !== null
+                ? `AI Security: Risk ${formatScore(securityState.riskScore, 0)}/100 (${securityState.riskLevel || 'LOW'})`
                 : securityState.status === 'ACTIVE'
                 ? 'AI Voice Monitoring Active'
                 : securityState.status === 'OFFLINE'
@@ -226,9 +237,9 @@ export default function CallScreen({ name, roomName, callId, onEnded }) {
                 : 'AI Voice Shield Initializing...'}
             </strong>
             <small>
-              {securityState.syntheticProbability !== null
-                ? `Synthetic Voice Prob: ${securityState.syntheticProbability.toFixed(1)}% · Windows: ${securityState.windowsAnalyzed}`
-                : securityState.windowsAnalyzed > 0
+              {formatPercent(securityState.syntheticProbability, 1) !== null
+                ? `Synthetic Voice Prob: ${formatPercent(securityState.syntheticProbability, 1)}% · Windows: ${securityState.windowsAnalyzed || 0}`
+                : (securityState.windowsAnalyzed || 0) > 0
                 ? `Analyzing real audio (${securityState.windowsAnalyzed} windows)`
                 : 'Streaming real microphone audio'}
             </small>
@@ -241,25 +252,25 @@ export default function CallScreen({ name, roomName, callId, onEnded }) {
           <div className="security-details-drawer">
             <div className="drawer-header">
               <h3>NIRBHAYA SANCHAR SECURITY INTELLIGENCE</h3>
-              <span className={`risk-tag ${securityState.riskLevel.toLowerCase()}`}>{securityState.riskLevel} RISK</span>
+              <span className={`risk-tag ${String(securityState.riskLevel || 'low').toLowerCase()}`}>{securityState.riskLevel || 'LOW'} RISK</span>
             </div>
 
             <div className="drawer-grid">
               <div className="metric-box">
                 <span className="label">OVERALL RISK</span>
-                <span className="value">{securityState.riskScore !== null ? `${securityState.riskScore.toFixed(1)}/100` : '—'}</span>
+                <span className="value">{formatScore(securityState.riskScore, 1) !== null ? `${formatScore(securityState.riskScore, 1)}/100` : '—'}</span>
               </div>
               <div className="metric-box">
                 <span className="label">SYNTHETIC SPEECH</span>
-                <span className="value">{securityState.syntheticProbability !== null ? `${securityState.syntheticProbability.toFixed(1)}%` : 'Processing'}</span>
+                <span className="value">{formatPercent(securityState.syntheticProbability, 1) !== null ? `${formatPercent(securityState.syntheticProbability, 1)}%` : 'Processing'}</span>
               </div>
               <div className="metric-box">
                 <span className="label">SPEAKER MATCH</span>
-                <span className="value">{securityState.speakerSimilarity !== null ? `${securityState.speakerSimilarity.toFixed(1)}%` : 'No Enrolled Profile'}</span>
+                <span className="value">{formatPercent(securityState.speakerSimilarity, 1) !== null ? `${formatPercent(securityState.speakerSimilarity, 1)}%` : 'No Enrolled Profile'}</span>
               </div>
               <div className="metric-box">
                 <span className="label">AI CONFIDENCE</span>
-                <span className="value">{securityState.overallConfidence !== null ? `${(securityState.overallConfidence * 100).toFixed(0)}%` : '—'}</span>
+                <span className="value">{securityState.overallConfidence !== null && !isNaN(Number(securityState.overallConfidence)) ? `${(Number(securityState.overallConfidence) * 100).toFixed(0)}%` : '—'}</span>
               </div>
             </div>
 

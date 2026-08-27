@@ -259,12 +259,12 @@ app.post('/api/calls', (request, response) => {
     }
   }
 
-  // Check if caller or receiver is in an ongoing call
-  const activeExisting = [...calls.values()].find(
-    (c) => [c.caller.id, c.receiver.id].includes(caller.id) && ['ACCEPTED'].includes(c.status) && now - c.updatedAt < 60000,
-  )
-  if (activeExisting) {
-    return response.status(409).json({ error: 'User is already in an active call.', activeCallId: activeExisting.id })
+  // Auto-close any previous active call for this caller
+  for (const [id, c] of calls.entries()) {
+    if ([c.caller?.id, c.receiver?.id].includes(caller.id) && ['ACCEPTED', 'RINGING'].includes(c.status)) {
+      c.status = 'ENDED'
+      c.updatedAt = now
+    }
   }
 
   const call = {
