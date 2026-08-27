@@ -36,11 +36,12 @@ function App() {
   return (
     <main className="app-shell">
       <header className="brand-bar">
-        <div className="gov-mark"><img src="https://upload.wikimedia.org/wikipedia/commons/5/55/Emblem_of_India.svg" alt="Government of India emblem" onError={(event) => { event.currentTarget.style.display = 'none' }} /><span aria-hidden="true">INDIA</span></div>
-        <img className="brand-logo" src="/nirbhaya-sanchar-logo.svg" alt="Nirbhaya Sanchar" />
-        <small>BRUTE FORCE</small>
+        <img className="brand-app-logo" src="/image.png" alt="Secure voice calling" />
+        <div className="brand-heading"><strong>NIRBHAYA SANCHAR</strong><span>SECURE VOIP CALL SYSTEM</span><small>GOVERNMENT OF INDIA <i aria-hidden="true">•</i> SECURE VOICE COMMUNICATION</small></div>
+        <div className="brand-status"><strong>VOIP CALL SYSTEM</strong><span><i aria-hidden="true" /> SECURE CHANNEL</span></div>
       </header>
       {call ? <CallScreen {...call} onEnded={() => { if (call.callId) updateCall(call.callId, 'end').catch(() => {}); setCall(null) }} /> : profile ? <ContactsScreen profile={profile} onLogout={() => { clearSessionUser(); setProfile(null) }} onManualJoin={() => { clearSessionUser(); setProfile(null) }} onConnected={setCall} /> : <AuthScreen onAuthenticated={setProfile} onManualJoin={() => { clearSessionUser(); setProfile(null) }} />}
+        <nav className="mobile-nav" aria-label="Application navigation"><span className="active"><b aria-hidden="true">◉</b>Contacts</span><span><b aria-hidden="true">☎</b>Calls</span><span><b aria-hidden="true">✉</b>Messages</span><span><b aria-hidden="true">⚙</b>More</span></nav>
       <footer>PRIVATE VOICE CHANNEL <span aria-hidden="true">•</span> CONNECTIONS ARE ENCRYPTED IN TRANSIT</footer>
     </main>
   )
