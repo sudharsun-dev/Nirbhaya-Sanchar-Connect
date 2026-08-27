@@ -14,8 +14,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY backend/requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt
 
-# Copy backend application source
+# Copy backend application source and model checkpoints
 COPY backend/app /app/app
+COPY backend/models /app/models
 
 EXPOSE 8000
 
