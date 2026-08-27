@@ -131,18 +131,33 @@ async def start_analysis(req: AnalysisStartRequest, db: AsyncSession = Depends(g
             status="ACTIVE"
         )
         db.add(call_obj)
+    else:
+        call_obj.status = "ACTIVE"
+        call_obj.caller_id = req.caller_id
+        call_obj.receiver_id = req.receiver_id
 
-    # Create analysis session
-    session_obj = AnalysisSession(
-        id=str(uuid.uuid4()),
-        call_id=req.call_id,
-        caller_id=req.caller_id,
-        receiver_id=req.receiver_id,
-        organization_id=req.organization_id,
-        transaction_metadata=req.transaction.dict() if req.transaction else None,
-        status="STARTED"
+    # Create or update analysis session using req.call_id
+    session_res = await db.execute(
+        select(AnalysisSession).where((AnalysisSession.id == req.call_id) | (AnalysisSession.call_id == req.call_id))
     )
-    db.add(session_obj)
+    session_obj = session_res.scalars().first()
+    if not session_obj:
+        session_obj = AnalysisSession(
+            id=req.call_id,
+            call_id=req.call_id,
+            caller_id=req.caller_id,
+            receiver_id=req.receiver_id,
+            organization_id=req.organization_id,
+            transaction_metadata=req.transaction.dict() if req.transaction else None,
+            status="STARTED"
+        )
+        db.add(session_obj)
+    else:
+        session_obj.status = "STARTED"
+        session_obj.caller_id = req.caller_id
+        session_obj.receiver_id = req.receiver_id
+        if req.transaction:
+            session_obj.transaction_metadata = req.transaction.dict()
 
     # Audit Log
     audit = AuditLog(
@@ -489,17 +504,20 @@ async def get_dashboard_stats(db: AsyncSession = Depends(get_db)):
     recent_table = []
     for c in calls_list:
         rs_res = await db.execute(
-            select(RiskScore).join(AnalysisSession).where(AnalysisSession.call_id == c.id).order_by(RiskScore.timestamp.desc())
+            select(RiskScore).join(AnalysisSession, RiskScore.analysis_id == AnalysisSession.id).where(AnalysisSession.call_id == c.id).order_by(RiskScore.timestamp.desc())
         )
         rs = rs_res.scalars().first()
+        created_str = c.created_at.isoformat() if c.created_at else datetime.utcnow().isoformat()
         recent_table.append({
             "call_id": c.id,
             "caller_id": c.caller_id,
             "receiver_id": c.receiver_id,
-            "created_at": c.created_at.isoformat(),
+            "created_at": created_str,
             "status": c.status,
+            "synthetic_prob": rs.synthetic_probability if rs else None,
             "risk_score": rs.risk_score if rs else 0.0,
             "risk_level": rs.risk_level if rs else "LOW",
+            "recommended_action": "HOLD" if (rs and rs.risk_level == "HIGH") else "ALLOW",
             "reasons": rs.reasons if rs else []
         })
 

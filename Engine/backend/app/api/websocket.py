@@ -172,32 +172,40 @@ async def websocket_analysis_endpoint(websocket: WebSocket, analysis_id: str):
                 # 8. Persist Telemetry Metadata to DB (No raw audio stored)
                 try:
                     async with AsyncSessionLocal() as db:
-                        # Ensure call and session records exist
-                        session_res = await db.execute(select(AnalysisSession).where(AnalysisSession.id == analysis_id))
-                        session_obj = session_res.scalars().first()
-                        if not session_obj:
-                            # Register placeholder session if not initiated via REST
-                            call_record = Call(
+                        # Ensure call record exists
+                        call_res = await db.execute(select(Call).where(Call.id == analysis_id))
+                        call_obj = call_res.scalars().first()
+                        if not call_obj:
+                            call_obj = Call(
                                 id=analysis_id,
                                 caller_id="caller_stream",
                                 receiver_id="receiver_stream",
                                 channel="VOIP",
                                 status="ACTIVE"
                             )
-                            db.add(call_record)
+                            db.add(call_obj)
+
+                        # Ensure session record exists
+                        session_res = await db.execute(
+                            select(AnalysisSession).where((AnalysisSession.id == analysis_id) | (AnalysisSession.call_id == analysis_id))
+                        )
+                        session_obj = session_res.scalars().first()
+                        if not session_obj:
                             session_obj = AnalysisSession(
                                 id=analysis_id,
                                 call_id=analysis_id,
-                                caller_id="caller_stream",
-                                receiver_id="receiver_stream",
+                                caller_id=call_obj.caller_id,
+                                receiver_id=call_obj.receiver_id,
                                 status="PROCESSING"
                             )
                             db.add(session_obj)
+                        else:
+                            session_obj.status = "PROCESSING"
 
                         # Window Record
                         window_rec = AudioAnalysisWindow(
                             id=str(uuid.uuid4()),
-                            analysis_id=analysis_id,
+                            analysis_id=session_obj.id,
                             window_index=window_index,
                             duration_ms=processed_audio["duration_ms"],
                             sample_rate=processed_audio["sample_rate"],
@@ -209,7 +217,7 @@ async def websocket_analysis_endpoint(websocket: WebSocket, analysis_id: str):
 
                         # Voice Result
                         voice_rec = VoiceAnalysisResult(
-                            analysis_id=analysis_id,
+                            analysis_id=session_obj.id,
                             window_id=window_rec.id,
                             synthetic_probability=voice_res.get("synthetic_probability"),
                             authenticity_score=voice_res.get("authenticity_score"),
@@ -224,7 +232,7 @@ async def websocket_analysis_endpoint(websocket: WebSocket, analysis_id: str):
 
                         # Risk Score
                         risk_rec = RiskScore(
-                            analysis_id=analysis_id,
+                            analysis_id=session_obj.id,
                             risk_score=risk_output["risk_score"],
                             risk_level=risk_output["risk_level"],
                             overall_confidence=risk_output["overall_confidence"],
@@ -239,7 +247,7 @@ async def websocket_analysis_endpoint(websocket: WebSocket, analysis_id: str):
 
                         # Policy Decision
                         policy_rec = PolicyDecision(
-                            analysis_id=analysis_id,
+                            analysis_id=session_obj.id,
                             policy_profile=policy_output["policy_profile"],
                             recommended_action=policy_output["recommended_action"],
                             verification_required=policy_output["verification_required"],

@@ -14,6 +14,7 @@ import { fetchHealth } from './services/api';
 export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [healthStatus, setHealthStatus] = useState(null);
+  const [selectedCallId, setSelectedCallId] = useState(null);
   const [whyThisScoreModal, setWhyThisScoreModal] = useState({
     isOpen: false,
     riskData: null,
@@ -35,6 +36,11 @@ export default function App() {
     return () => clearInterval(interval);
   }, []);
 
+  const handleSelectCall = (callId) => {
+    setSelectedCallId(callId);
+    setActiveTab('live-call');
+  };
+
   const handleOpenWhyThisScore = (riskData, analysisId, callId) => {
     setWhyThisScoreModal({
       isOpen: true,
@@ -54,10 +60,16 @@ export default function App() {
 
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {activeTab === 'dashboard' && (
-          <Dashboard onStartCallClick={() => setActiveTab('live-call')} />
+          <Dashboard
+            onStartCallClick={() => { setSelectedCallId(null); setActiveTab('live-call'); }}
+            onSelectCall={handleSelectCall}
+          />
         )}
         {activeTab === 'live-call' && (
-          <LiveCallUI onOpenWhyThisScore={handleOpenWhyThisScore} />
+          <LiveCallUI
+            initialCallId={selectedCallId}
+            onOpenWhyThisScore={handleOpenWhyThisScore}
+          />
         )}
         {activeTab === 'transaction' && <TransactionSecurity />}
         {activeTab === 'alerts' && <RiskAlertsConsole />}

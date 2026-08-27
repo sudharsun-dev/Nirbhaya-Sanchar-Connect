@@ -41,21 +41,22 @@ function encodeWav(samples, sampleRate = 16000) {
   return buffer;
 }
 
-export default function LiveCallUI({ onOpenWhyThisScore }) {
+export default function LiveCallUI({ onOpenWhyThisScore, initialCallId }) {
   const [callState, setCallState] = useState({
-    callId: `nirbhaya-call-${Date.now().toString(36)}`,
+    callId: initialCallId || `nirbhaya-call-${Date.now().toString(36)}`,
     callerName: 'Official Caller',
     callerId: 'officer@sanchar.gov.in',
     receiverId: 'analyst@sanchar.gov.in',
     channel: 'VOIP',
     durationSec: 0,
-    status: 'IDLE', // IDLE, CONNECTED, ANALYZING
+    status: initialCallId ? 'ANALYZING' : 'IDLE', // IDLE, CONNECTED, ANALYZING
   });
 
-  const [audioStreamState, setAudioStreamState] = useState('WAITING FOR AUDIO'); // WAITING FOR AUDIO, AUDIO RECEIVING, ANALYZING AUDIO, ANALYSIS COMPLETE, ENGINE OFFLINE
+  const [availableCalls, setAvailableCalls] = useState([]);
+  const [audioStreamState, setAudioStreamState] = useState(initialCallId ? 'AUDIO RECEIVING' : 'WAITING FOR AUDIO');
   const [isMicActive, setIsMicActive] = useState(false);
   const [rmsVolume, setRmsVolume] = useState(0);
-  const [analysisId, setAnalysisId] = useState(null);
+  const [analysisId, setAnalysisId] = useState(initialCallId || null);
 
   // Real AI Outputs from backend AASIST & Risk Engine
   const [riskData, setRiskData] = useState({
@@ -87,6 +88,58 @@ export default function LiveCallUI({ onOpenWhyThisScore }) {
   const processorRef = useRef(null);
   const wsRef = useRef(null);
   const timerRef = useRef(null);
+
+  // Auto-subscribe to initialCallId or active call from backend
+  useEffect(() => {
+    let active = true;
+
+    async function syncActiveCalls() {
+      try {
+        const stats = await fetch(`${API_BASE}/dashboard/stats`).then((r) => r.json()).catch(() => ({ recent_calls: [] }));
+        if (!active) return;
+        const calls = stats.recent_calls || [];
+        setAvailableCalls(calls);
+
+        if (initialCallId) {
+          const match = calls.find((c) => c.call_id === initialCallId);
+          if (match) {
+            setCallState((prev) => ({
+              ...prev,
+              callId: match.call_id,
+              callerId: match.caller_id,
+              receiverId: match.receiver_id,
+              status: 'ANALYZING',
+            }));
+          }
+          connectWebSocket(initialCallId);
+        } else if (calls.length > 0 && !analysisId) {
+          const latest = calls[0];
+          setCallState((prev) => ({
+            ...prev,
+            callId: latest.call_id,
+            callerId: latest.caller_id,
+            receiverId: latest.receiver_id,
+            status: 'ANALYZING',
+          }));
+          setAnalysisId(latest.call_id);
+          connectWebSocket(latest.call_id);
+        }
+      } catch (e) {
+        console.warn('[SYSTEM 2] Failed to sync active calls', e);
+      }
+    }
+
+    syncActiveCalls();
+    const interval = setInterval(syncActiveCalls, 5000);
+
+    return () => {
+      active = false;
+      clearInterval(interval);
+      if (wsRef.current) {
+        try { wsRef.current.close(); } catch (_) {}
+      }
+    };
+  }, [initialCallId]);
 
   // Live call timer
   useEffect(() => {
@@ -347,16 +400,43 @@ export default function LiveCallUI({ onOpenWhyThisScore }) {
   return (
     <div className="space-y-6">
       {/* Top Header Bar */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between border-b border-slate-200 pb-4">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between border-b border-slate-200 pb-4 gap-3">
         <div>
           <div className="inline-flex items-center gap-2 px-2.5 py-0.5 rounded-full bg-slate-900 text-slate-100 text-[11px] font-mono font-semibold uppercase tracking-wider mb-1">
-            <Shield className="w-3.5 h-3.5 text-emerald-400" />
+            <ShieldAlert className="w-3.5 h-3.5 text-emerald-400" />
             Live Security Monitoring Console
           </div>
           <h2 className="text-xl font-bold text-slate-900 tracking-tight">REAL-TIME CALL INTELLIGENCE</h2>
         </div>
 
-        <div className="mt-3 sm:mt-0 flex items-center space-x-3">
+        <div className="flex flex-wrap items-center gap-2">
+          {availableCalls.length > 0 && (
+            <select
+              value={callState.callId}
+              onChange={(e) => {
+                const selected = availableCalls.find((c) => c.call_id === e.target.value);
+                if (selected) {
+                  setCallState((prev) => ({
+                    ...prev,
+                    callId: selected.call_id,
+                    callerId: selected.caller_id,
+                    receiverId: selected.receiver_id,
+                    status: 'ANALYZING',
+                  }));
+                  setAnalysisId(selected.call_id);
+                  connectWebSocket(selected.call_id);
+                }
+              }}
+              className="bg-white border border-slate-300 rounded-lg text-xs font-mono px-3 py-2 text-slate-800 shadow-sm focus:outline-none focus:ring-1 focus:ring-emerald-500"
+            >
+              {availableCalls.map((c) => (
+                <option key={c.call_id} value={c.call_id}>
+                  {c.call_id.slice(0, 18)}... ({c.caller_id} → {c.receiver_id})
+                </option>
+              ))}
+            </select>
+          )}
+
           {isMicActive ? (
             <button
               onClick={handleStopAnalysis}
@@ -371,7 +451,7 @@ export default function LiveCallUI({ onOpenWhyThisScore }) {
               className="inline-flex items-center space-x-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs px-4 py-2 rounded-lg shadow-sm transition"
             >
               <Mic className="w-4 h-4" />
-              <span>Start Real Audio Tap</span>
+              <span>Start Local Mic Tap</span>
             </button>
           )}
         </div>

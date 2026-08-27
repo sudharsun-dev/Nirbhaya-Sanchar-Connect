@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { PhoneCall, ShieldAlert, CheckCircle2, Clock, AlertTriangle, ArrowRight, Play, Server, Cpu, Database, Radio } from 'lucide-react';
 import { fetchDashboardStats, fetchHealth } from '../services/api';
 
-export default function Dashboard({ onStartCallClick }) {
+export default function Dashboard({ onStartCallClick, onSelectCall }) {
   const [stats, setStats] = useState({
     active_calls: 0,
     calls_analyzed: 0,
@@ -152,7 +152,7 @@ export default function Dashboard({ onStartCallClick }) {
         <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between bg-slate-50/50">
           <div>
             <h3 className="text-sm font-bold text-slate-900 tracking-tight">REAL-TIME CALL RISK TELEMETRY FEED</h3>
-            <p className="text-xs text-slate-500">Live streams processed by AASIST anti-spoofing engine</p>
+            <p className="text-xs text-slate-500">Live streams processed by AASIST anti-spoofing engine (Click any call to monitor)</p>
           </div>
           <span className="inline-flex items-center gap-1.5 text-xs text-emerald-700 font-medium bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200 font-mono">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
@@ -168,14 +168,18 @@ export default function Dashboard({ onStartCallClick }) {
                 <th className="px-6 py-3 text-left text-[11px] font-bold text-slate-500 uppercase tracking-wider">Status</th>
                 <th className="px-6 py-3 text-left text-[11px] font-bold text-slate-500 uppercase tracking-wider">Synthetic Prob</th>
                 <th className="px-6 py-3 text-left text-[11px] font-bold text-slate-500 uppercase tracking-wider">Risk Level</th>
-                <th className="px-6 py-3 text-left text-[11px] font-bold text-slate-500 uppercase tracking-wider">Recommended Action</th>
+                <th className="px-6 py-3 text-left text-[11px] font-bold text-slate-500 uppercase tracking-wider">Action</th>
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-slate-100 text-xs">
               {stats.recent_calls && stats.recent_calls.length > 0 ? (
                 stats.recent_calls.map((call, idx) => (
-                  <tr key={call.call_id || idx} className="hover:bg-slate-50/80 transition">
-                    <td className="px-6 py-3.5 font-mono text-slate-700">{call.call_id}</td>
+                  <tr
+                    key={call.call_id || idx}
+                    onClick={() => onSelectCall && onSelectCall(call.call_id)}
+                    className="hover:bg-emerald-50/50 cursor-pointer transition"
+                  >
+                    <td className="px-6 py-3.5 font-mono text-slate-700 font-semibold text-emerald-700 hover:underline">{call.call_id}</td>
                     <td className="px-6 py-3.5 text-slate-900 font-medium">
                       {call.caller_id || 'Caller'} → {call.receiver_id || 'Receiver'}
                     </td>

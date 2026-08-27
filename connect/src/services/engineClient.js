@@ -1,7 +1,7 @@
 // System 1 Integration Client for Nirbhaya Sanchar Engine (System 2)
 
-const defaultHttp = 'http://localhost:8000/api/v1';
-const defaultWs = 'ws://localhost:8000/ws';
+const defaultHttp = import.meta.env.DEV ? 'http://localhost:8000/api/v1' : 'https://nirbhaya-sanchar-connect.onrender.com/api/v1';
+const defaultWs = import.meta.env.DEV ? 'ws://localhost:8000/ws' : 'wss://nirbhaya-sanchar-connect.onrender.com/ws';
 
 function resolveEngineHttp() {
   const raw = (import.meta.env.VITE_ENGINE_HTTP_URL || defaultHttp).replace(/\/$/, '');
