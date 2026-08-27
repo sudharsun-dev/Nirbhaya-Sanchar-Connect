@@ -110,9 +110,10 @@ export default async function handler(request, response) {
       }
 
       const nextStatus = transitions[action][1]
+      const updatedAt = new Date().toISOString()
       const { data: updatedCall, error: updateError } = await supabase
         .from('calls')
-        .update({ status: nextStatus, updated_at: Date.now() })
+        .update({ status: nextStatus, updated_at: updatedAt })
         .eq('id', callId)
         .select('id, caller_id, receiver_id, room_id, status, created_at, updated_at')
         .single()
@@ -156,6 +157,7 @@ export default async function handler(request, response) {
     }
 
     const roomId = `room-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    const now = new Date().toISOString()
     const { data: createdCall, error: createError } = await supabase
       .from('calls')
       .insert({
@@ -163,8 +165,8 @@ export default async function handler(request, response) {
         receiver_id: receiverId,
         room_id: roomId,
         status: 'ringing',
-        created_at: Date.now(),
-        updated_at: Date.now(),
+        created_at: now,
+        updated_at: now,
       })
       .select('id, caller_id, receiver_id, room_id, status, created_at, updated_at')
       .single()
