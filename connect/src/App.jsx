@@ -38,7 +38,7 @@ function App() {
       <header className="brand-bar">
         <img className="brand-app-logo" src="/image.png" alt="Nirbhaya Sanchar" />
         <div className="brand-heading"><strong>NIRBHAYA <span>SANCHAR</span></strong><small>SECURE COMMUNICATION</small></div>
-        <div className="brand-status"><i aria-hidden="true" /> ONLINE</div>
+        <div className="brand-actions"><button type="button" aria-label="Search" onClick={() => document.querySelector('.search-row input')?.focus()}>⌕</button><button type="button" aria-label="More options">•••</button></div>
       </header>
       <div className="app-content">
         {call ? <CallScreen {...call} onEnded={() => { if (call.callId) updateCall(call.callId, 'end').catch(() => {}); setCall(null) }} /> : profile ? <ContactsScreen profile={profile} onLogout={() => { clearSessionUser(); setProfile(null) }} onManualJoin={() => { clearSessionUser(); setProfile(null) }} onConnected={setCall} /> : <AuthScreen onAuthenticated={setProfile} onManualJoin={() => { clearSessionUser(); setProfile(null) }} />}
