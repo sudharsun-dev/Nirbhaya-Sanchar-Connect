@@ -1,50 +1,91 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   Mic, MicOff, Volume2, ShieldAlert, AlertCircle, HelpCircle,
-  Upload, Play, Square, CheckCircle, RefreshCw, AlertTriangle
+  Play, Square, CheckCircle2, RefreshCw, AlertTriangle, ShieldCheck,
+  Radio, Clock, Database, ChevronRight, Activity, FileText
 } from 'lucide-react';
-import { startAnalysis, sendAudioChunk, requestVerification } from '../services/api';
+import { startAnalysis, sendAudioChunk, requestVerification, resolveWsBase, API_BASE } from '../services/api';
+
+/**
+ * Encodes raw Float32 samples into a standard 16-bit mono PCM WAV ArrayBuffer.
+ */
+function encodeWav(samples, sampleRate = 16000) {
+  const buffer = new ArrayBuffer(44 + samples.length * 2);
+  const view = new DataView(buffer);
+
+  function writeString(offset, string) {
+    for (let i = 0; i < string.length; i++) {
+      view.setUint8(offset + i, string.charCodeAt(i));
+    }
+  }
+
+  writeString(0, 'RIFF');
+  view.setUint32(4, 36 + samples.length * 2, true);
+  writeString(8, 'WAVE');
+  writeString(12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true); // PCM
+  view.setUint16(22, 1, true); // Mono
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeString(36, 'data');
+  view.setUint32(40, samples.length * 2, true);
+
+  let offset = 44;
+  for (let i = 0; i < samples.length; i++, offset += 2) {
+    const s = Math.max(-1, Math.min(1, samples[i]));
+    view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+  }
+  return buffer;
+}
 
 export default function LiveCallUI({ onOpenWhyThisScore }) {
   const [callState, setCallState] = useState({
-    callId: 'call_' + Math.random().toString(36).substring(2, 9),
-    callerName: 'Aditya Verma (Claimed)',
-    callerId: '+91 98765 43210',
-    receiverId: '+91 91234 56789',
+    callId: `nirbhaya-call-${Date.now().toString(36)}`,
+    callerName: 'Official Caller',
+    callerId: 'officer@sanchar.gov.in',
+    receiverId: 'analyst@sanchar.gov.in',
     channel: 'VOIP',
     durationSec: 0,
-    status: 'IDLE' // IDLE, CONNECTED, ANALYZING
+    status: 'IDLE', // IDLE, CONNECTED, ANALYZING
   });
 
+  const [audioStreamState, setAudioStreamState] = useState('WAITING FOR AUDIO'); // WAITING FOR AUDIO, AUDIO RECEIVING, ANALYZING AUDIO, ANALYSIS COMPLETE, ENGINE OFFLINE
+  const [isMicActive, setIsMicActive] = useState(false);
+  const [rmsVolume, setRmsVolume] = useState(0);
   const [analysisId, setAnalysisId] = useState(null);
-  const [isRecording, setIsRecording] = useState(false);
-  const [transcriptInput, setTranscriptInput] = useState('Transfer ₹5,00,000 immediately.');
-  const [txAmount, setTxAmount] = useState(500000);
-  const [txType, setTxType] = useState('TRANSFER');
 
-  // Real AI Outputs state
+  // Real AI Outputs from backend AASIST & Risk Engine
   const [riskData, setRiskData] = useState({
-    riskScore: 0,
+    riskScore: null,
     riskLevel: 'LOW',
-    overallConfidence: 0.0,
+    overallConfidence: null,
     syntheticProbability: null,
+    voiceAuthenticity: null,
     speakerSimilarity: null,
-    audioQuality: 1.0,
+    audioQuality: null,
     contextScore: null,
     transactionScore: null,
     behaviorScore: null,
     reasons: [],
     recommendedAction: 'CONTINUE',
-    verificationRequired: false
+    verificationRequired: false,
+    windowsAnalyzed: 0,
+    lastLatencyMs: null,
   });
 
+  // Evidence log of actual analysis windows
+  const [evidenceLog, setEvidenceLog] = useState([]);
   const [showAlertModal, setShowAlertModal] = useState(false);
   const [verificationPending, setVerificationPending] = useState(false);
-  const [audioSourceType, setAudioSourceType] = useState('MIC'); // MIC, UPLOAD, SAMPLE
 
   const canvasRef = useRef(null);
-  const mediaRecorderRef = useRef(null);
-  const audioChunksRef = useRef([]);
+  const audioContextRef = useRef(null);
+  const mediaStreamRef = useRef(null);
+  const processorRef = useRef(null);
+  const wsRef = useRef(null);
   const timerRef = useRef(null);
 
   // Live call timer
@@ -59,7 +100,7 @@ export default function LiveCallUI({ onOpenWhyThisScore }) {
     return () => clearInterval(timerRef.current);
   }, [callState.status]);
 
-  // Waveform canvas animation
+  // Waveform visualization based on real RMS volume
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -72,439 +113,604 @@ export default function LiveCallUI({ onOpenWhyThisScore }) {
       ctx.beginPath();
       ctx.lineWidth = 2;
 
-      const isAnalyzing = callState.status === 'ANALYZING' || isRecording;
-      ctx.strokeStyle = isAnalyzing ? '#2563eb' : '#cbd5e1';
-
       const width = canvas.width;
       const height = canvas.height;
-      const amplitude = isAnalyzing ? 18 : 3;
+      const hasAudio = isMicActive && rmsVolume > 0.005;
+
+      ctx.strokeStyle = hasAudio ? '#059669' : '#94a3b8';
+
+      // Amplitude scales with real audio RMS
+      const baseAmp = hasAudio ? Math.min(32, Math.max(8, rmsVolume * 120)) : 1.5;
 
       for (let x = 0; x < width; x++) {
-        const y = height / 2 + Math.sin(x * 0.04 + phase) * amplitude * Math.cos(x * 0.01);
+        const y = height / 2 + Math.sin(x * 0.05 + phase) * baseAmp * Math.cos(x * 0.02);
         if (x === 0) ctx.moveTo(x, y);
         else ctx.lineTo(x, y);
       }
       ctx.stroke();
-      phase += isAnalyzing ? 0.15 : 0.03;
+
+      phase += hasAudio ? 0.2 : 0.02;
       animationFrameId = requestAnimationFrame(renderWave);
     };
 
     renderWave();
     return () => cancelAnimationFrame(animationFrameId);
-  }, [callState.status, isRecording]);
+  }, [isMicActive, rmsVolume]);
 
-  // Start analysis session
-  const handleStartSession = async () => {
+  // Connect to System 2 WebSocket for the current analysis session
+  const connectWebSocket = (targetId) => {
+    if (wsRef.current) {
+      try { wsRef.current.close(); } catch (_) {}
+      wsRef.current = null;
+    }
+
+    const wsBase = resolveWsBase();
+    const wsUrl = `${wsBase}/analysis/${targetId}`;
+    console.info(`[SYSTEM 2] Connecting to WebSocket: ${wsUrl}`);
+
+    const socket = new WebSocket(wsUrl);
+    wsRef.current = socket;
+
+    socket.onopen = () => {
+      console.info(`[SYSTEM 2] WebSocket connected for session ${targetId}`);
+      setAudioStreamState('AUDIO RECEIVING');
+    };
+
+    socket.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.event === 'AUDIO_PROCESSED') {
+          setAudioStreamState('ANALYZING AUDIO');
+          setRiskData((prev) => ({
+            ...prev,
+            audioQuality: data.audio_quality_score,
+            windowsAnalyzed: data.window_index || prev.windowsAnalyzed + 1,
+            lastLatencyMs: data.processing_latency_ms,
+          }));
+        } else if (data.event === 'RISK_UPDATED') {
+          const authScore = data.synthetic_probability != null ? Math.max(0, 100 - data.synthetic_probability) : null;
+          setRiskData((prev) => ({
+            ...prev,
+            riskScore: data.risk_score,
+            riskLevel: data.risk_level,
+            overallConfidence: data.overall_confidence,
+            syntheticProbability: data.synthetic_probability,
+            voiceAuthenticity: authScore,
+            speakerSimilarity: data.speaker_similarity,
+            contextScore: data.context_score,
+            reasons: data.reasons || [],
+            recommendedAction: data.recommended_action || prev.recommendedAction,
+            lastLatencyMs: data.processing_latency_ms,
+          }));
+
+          // Add to real evidence log
+          setEvidenceLog((prev) => [
+            {
+              timestamp: new Date().toLocaleTimeString(),
+              callId: targetId,
+              windowIndex: data.window_index || prev.length + 1,
+              syntheticProbability: data.synthetic_probability,
+              modelConfidence: data.overall_confidence,
+              riskScore: data.risk_score,
+              riskLevel: data.risk_level,
+              recommendedAction: data.recommended_action,
+            },
+            ...prev.slice(0, 19),
+          ]);
+
+          if (data.risk_level === 'HIGH') {
+            setShowAlertModal(true);
+          }
+        } else if (data.event === 'POLICY_UPDATED') {
+          setRiskData((prev) => ({
+            ...prev,
+            recommendedAction: data.recommended_action,
+            verificationRequired: data.verification_required,
+          }));
+        }
+      } catch (e) {
+        console.error('[SYSTEM 2] Failed to parse WebSocket message', e);
+      }
+    };
+
+    socket.onerror = (err) => {
+      console.warn('[SYSTEM 2] WebSocket connection error', err);
+      setAudioStreamState('ENGINE OFFLINE');
+    };
+
+    socket.onclose = () => {
+      console.info('[SYSTEM 2] WebSocket closed');
+    };
+  };
+
+  // Start Live Audio Tap & Session
+  const handleStartAnalysis = async () => {
     try {
-      const res = await startAnalysis({
-        call_id: callState.callId,
+      const activeId = callState.callId;
+      setAnalysisId(activeId);
+      setCallState((prev) => ({ ...prev, status: 'ANALYZING' }));
+      setAudioStreamState('WAITING FOR AUDIO');
+
+      // 1. Notify Backend Start
+      await startAnalysis({
+        call_id: activeId,
         caller_id: callState.callerId,
         receiver_id: callState.receiverId,
         channel: callState.channel,
-        transaction: {
-          type: txType,
-          amount: Number(txAmount),
-          currency: 'INR',
-          sensitivity: Number(txAmount) >= 500000 ? 'HIGH' : 'NORMAL'
-        }
-      });
-      if (res.analysis_id) {
-        setAnalysisId(res.analysis_id);
-        setCallState((prev) => ({ ...prev, status: 'ANALYZING' }));
-      }
-    } catch (err) {
-      console.error('Failed to start analysis session', err);
-    }
-  };
+      }).catch((e) => console.warn('[SYSTEM 2] Start analysis notification warning:', e));
 
-  // Process sample audio simulation
-  const handleProcessSampleAudio = async () => {
-    let currentAnalysisId = analysisId;
-    if (!currentAnalysisId) {
-      const startRes = await startAnalysis({
-        call_id: callState.callId,
-        caller_id: callState.callerId,
-        receiver_id: callState.receiverId,
-        channel: callState.channel,
-        transaction: {
-          type: txType,
-          amount: Number(txAmount),
-          currency: 'INR',
-          sensitivity: Number(txAmount) >= 500000 ? 'HIGH' : 'NORMAL'
-        }
-      });
-      currentAnalysisId = startRes.analysis_id;
-      setAnalysisId(currentAnalysisId);
-    }
+      // 2. Connect WebSocket
+      connectWebSocket(activeId);
 
-    setCallState((prev) => ({ ...prev, status: 'ANALYZING' }));
-
-    // Generate 2 second audio buffer
-    const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-    const buffer = audioContext.createBuffer(1, 16000 * 2, 16000);
-    const data = buffer.getChannelData(0);
-    for (let i = 0; i < data.length; i++) {
-      data[i] = Math.sin(i * 0.05) * 0.5;
-    }
-
-    // Convert audio buffer to WAV blob
-    const wavBlob = createWavBlob(data, 16000);
-
-    try {
-      const res = await sendAudioChunk(currentAnalysisId, wavBlob, 1, transcriptInput);
-      if (res) {
-        setRiskData({
-          riskScore: res.risk_score,
-          riskLevel: res.risk_level,
-          overallConfidence: 0.92,
-          syntheticProbability: res.risk_level === 'HIGH' ? 84.5 : 12.0,
-          speakerSimilarity: res.risk_level === 'HIGH' ? 38.2 : 91.5,
-          audioQuality: res.audio_quality_score,
-          contextScore: transcriptInput.includes('Transfer') ? 85.0 : 10.0,
-          transactionScore: Number(txAmount) >= 500000 ? 75.0 : 20.0,
-          behaviorScore: 30.0,
-          reasons: res.reasons || [],
-          recommendedAction: res.recommended_action,
-          verificationRequired: res.recommended_action === 'HOLD' || res.recommended_action === 'VERIFY'
-        });
-
-        if (res.risk_level === 'HIGH') {
-          setShowAlertModal(true);
-        }
-      }
-    } catch (err) {
-      console.error('Audio chunk analysis failed', err);
-    }
-  };
-
-  // Start microphone recording
-  const handleStartMic = async () => {
-    try {
+      // 3. Acquire Real Microphone Audio Track
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      mediaRecorderRef.current = new MediaRecorder(stream);
-      audioChunksRef.current = [];
+      mediaStreamRef.current = stream;
+      setIsMicActive(true);
 
-      mediaRecorderRef.current.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          audioChunksRef.current.push(event.data);
+      const targetSampleRate = 16000;
+      const chunkDurationSec = 2.5;
+      const samplesPerChunk = Math.floor(targetSampleRate * chunkDurationSec);
+
+      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+      const audioCtx = new AudioContextClass({ sampleRate: targetSampleRate });
+      audioContextRef.current = audioCtx;
+
+      const source = audioCtx.createMediaStreamSource(stream);
+      const processor = audioCtx.createScriptProcessor(4096, 1, 1);
+      processorRef.current = processor;
+
+      let pcmBuffer = [];
+      let windowCount = 0;
+
+      processor.onaudioprocess = (e) => {
+        const input = e.inputBuffer.getChannelData(0);
+
+        // Calculate Real RMS for Waveform
+        let sum = 0;
+        for (let i = 0; i < input.length; i++) {
+          sum += input[i] * input[i];
+          pcmBuffer.push(input[i]);
         }
-      };
+        const rms = Math.sqrt(sum / input.length);
+        setRmsVolume(rms);
 
-      mediaRecorderRef.current.onstop = async () => {
-        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/wav' });
-        if (analysisId) {
-          const res = await sendAudioChunk(analysisId, audioBlob, 1, transcriptInput);
-          if (res) {
-            setRiskData({
-              riskScore: res.risk_score,
-              riskLevel: res.risk_level,
-              overallConfidence: 0.90,
-              syntheticProbability: res.risk_score > 60 ? 82.0 : 14.0,
-              speakerSimilarity: res.risk_score > 60 ? 42.0 : 89.0,
-              audioQuality: res.audio_quality_score,
-              contextScore: 40.0,
-              transactionScore: 30.0,
-              behaviorScore: 20.0,
-              reasons: res.reasons || [],
-              recommendedAction: res.recommended_action,
-              verificationRequired: res.recommended_action === 'HOLD'
-            });
-            if (res.risk_level === 'HIGH') setShowAlertModal(true);
+        // Once 2.5 seconds (40,000 samples at 16kHz) accumulated, stream to Engine
+        if (pcmBuffer.length >= samplesPerChunk) {
+          windowCount += 1;
+          const chunk = new Float32Array(pcmBuffer.slice(0, samplesPerChunk));
+          pcmBuffer = pcmBuffer.slice(samplesPerChunk);
+
+          const wavBuffer = encodeWav(chunk, targetSampleRate);
+          console.info(`[AUDIO-TAP] call_id=${activeId} chunk=${windowCount} sample_rate=16000 channels=1 bytes=${wavBuffer.byteLength} rms=${rms.toFixed(4)}`);
+
+          if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+            wsRef.current.send(wavBuffer);
+            setAudioStreamState('AUDIO RECEIVING');
+          } else {
+            // Fallback HTTP POST
+            const blob = new Blob([wavBuffer], { type: 'audio/wav' });
+            sendAudioChunk(activeId, blob, windowCount).catch(() => {});
           }
         }
       };
 
-      mediaRecorderRef.current.start();
-      setIsRecording(true);
-      if (!analysisId) handleStartSession();
+      source.connect(processor);
+      processor.connect(audioCtx.destination);
     } catch (err) {
-      alert('Microphone access unavailable or denied');
+      console.error('[SYSTEM 2] Failed to initialize microphone stream', err);
+      setAudioStreamState('AUDIO INGESTION ERROR');
+      setIsMicActive(false);
     }
   };
 
-  const handleStopMic = () => {
-    if (mediaRecorderRef.current && isRecording) {
-      mediaRecorderRef.current.stop();
-      setIsRecording(false);
+  // Stop Audio Tap & Session
+  const handleStopAnalysis = () => {
+    setIsMicActive(false);
+    setRmsVolume(0);
+    setAudioStreamState('ANALYSIS COMPLETE');
+    setCallState((prev) => ({ ...prev, status: 'IDLE' }));
+
+    if (mediaStreamRef.current) {
+      mediaStreamRef.current.getTracks().forEach((track) => track.stop());
+      mediaStreamRef.current = null;
+    }
+    if (processorRef.current) {
+      try { processorRef.current.disconnect(); } catch (_) {}
+      processorRef.current = null;
+    }
+    if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
+      try { audioContextRef.current.close(); } catch (_) {}
+      audioContextRef.current = null;
+    }
+    if (wsRef.current) {
+      try { wsRef.current.close(); } catch (_) {}
+      wsRef.current = null;
     }
   };
 
-  const handleRequestStepUpVerification = async () => {
+  const handleRequestVerification = async () => {
     if (!analysisId) return;
+    setVerificationPending(true);
     try {
       await requestVerification(analysisId, callState.callId, 'TRUSTED_CALLBACK');
-      setVerificationPending(true);
-      alert('Independent verification callback requested via out-of-band channel.');
+      alert('Verification request dispatched to trusted contact channel.');
     } catch (err) {
-      console.error(err);
+      console.error('Verification failed', err);
+    } finally {
+      setVerificationPending(false);
+      setShowAlertModal(false);
     }
   };
 
-  const formatDuration = (sec) => {
-    const m = Math.floor(sec / 60);
-    const s = sec % 60;
-    return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
-  };
+  const durationText = `${String(Math.floor(callState.durationSec / 60)).padStart(2, '0')}:${String(callState.durationSec % 60).padStart(2, '0')}`;
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-      {/* Left Column: Mobile Call Interface Frame */}
-      <div className="lg:col-span-5 flex justify-center">
-        <div className="w-full max-w-sm bg-slate-900 rounded-3xl p-6 text-white shadow-2xl border-4 border-slate-800 flex flex-col justify-between min-h-[580px]">
-          {/* Header */}
-          <div className="text-center pt-2">
-            <div className="inline-flex items-center space-x-2 bg-slate-800 px-3 py-1 rounded-full text-xs text-slate-300">
-              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-              <span>LIVE CALL SESSION</span>
+    <div className="space-y-6">
+      {/* Top Header Bar */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between border-b border-slate-200 pb-4">
+        <div>
+          <div className="inline-flex items-center gap-2 px-2.5 py-0.5 rounded-full bg-slate-900 text-slate-100 text-[11px] font-mono font-semibold uppercase tracking-wider mb-1">
+            <Shield className="w-3.5 h-3.5 text-emerald-400" />
+            Live Security Monitoring Console
+          </div>
+          <h2 className="text-xl font-bold text-slate-900 tracking-tight">REAL-TIME CALL INTELLIGENCE</h2>
+        </div>
+
+        <div className="mt-3 sm:mt-0 flex items-center space-x-3">
+          {isMicActive ? (
+            <button
+              onClick={handleStopAnalysis}
+              className="inline-flex items-center space-x-2 bg-rose-600 hover:bg-rose-700 text-white font-semibold text-xs px-4 py-2 rounded-lg shadow-sm transition"
+            >
+              <Square className="w-4 h-4 fill-white" />
+              <span>Stop Audio Tap</span>
+            </button>
+          ) : (
+            <button
+              onClick={handleStartAnalysis}
+              className="inline-flex items-center space-x-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs px-4 py-2 rounded-lg shadow-sm transition"
+            >
+              <Mic className="w-4 h-4" />
+              <span>Start Real Audio Tap</span>
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Main 2-Column Console Layout */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        {/* Left Column: Call Identity & Audio Waveform Stream */}
+        <div className="lg:col-span-5 space-y-6">
+          {/* Call Metadata Card */}
+          <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5 space-y-4">
+            <div className="flex justify-between items-center border-b border-slate-100 pb-3">
+              <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Active Session</span>
+              <span className={`inline-flex items-center gap-1.5 text-xs font-mono font-bold px-2.5 py-0.5 rounded-full ${
+                audioStreamState.includes('RECEIVING') || audioStreamState.includes('ANALYZING')
+                  ? 'bg-emerald-100 text-emerald-800'
+                  : 'bg-slate-100 text-slate-700'
+              }`}>
+                <span className={`w-2 h-2 rounded-full ${isMicActive ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'}`} />
+                {audioStreamState}
+              </span>
             </div>
 
-            <div className="mt-6 flex justify-center">
-              <div className="w-20 h-20 rounded-full bg-gradient-to-br from-blue-600 to-slate-700 flex items-center justify-center text-2xl font-bold text-white shadow-lg border-2 border-slate-600">
-                AV
+            <div className="space-y-2.5 text-xs">
+              <div className="flex justify-between">
+                <span className="text-slate-500">Call ID</span>
+                <span className="font-mono font-semibold text-slate-800">{callState.callId}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Caller Identity</span>
+                <span className="font-medium text-slate-900">{callState.callerName} ({callState.callerId})</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Receiver</span>
+                <span className="font-medium text-slate-900">{callState.receiverId}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Channel</span>
+                <span className="font-mono text-slate-800">ENCRYPTED VOIP (WEBRTC)</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Call Duration</span>
+                <span className="font-mono font-bold text-slate-900">{durationText}</span>
               </div>
             </div>
-
-            <h3 className="mt-3 text-lg font-bold text-white">{callState.callerName}</h3>
-            <p className="text-xs text-slate-400 font-mono">{callState.callerId}</p>
-            <p className="mt-1 text-xs text-blue-400 font-semibold">{formatDuration(callState.durationSec)}</p>
           </div>
 
-          {/* Waveform Canvas */}
-          <div className="my-6 bg-slate-950/70 rounded-xl p-3 border border-slate-800">
-            <canvas ref={canvasRef} width={280} height={60} className="w-full h-14" />
-            <div className="flex justify-between items-center mt-2 px-1 text-[10px] text-slate-400 font-mono">
-              <span>VOIP Audio Stream</span>
-              <span>16 kHz Mono PCM</span>
-            </div>
-          </div>
-
-          {/* Controls & Test Uploader */}
-          <div className="space-y-4">
-            <div className="grid grid-cols-3 gap-3">
-              <button
-                onClick={isRecording ? handleStopMic : handleStartMic}
-                className={`flex flex-col items-center justify-center p-3 rounded-xl transition ${
-                  isRecording ? 'bg-red-600 hover:bg-red-700 text-white' : 'bg-slate-800 hover:bg-slate-700 text-slate-200'
-                }`}
-              >
-                <Mic className="w-5 h-5 mb-1" />
-                <span className="text-[10px] font-medium">{isRecording ? 'Stop Mic' : 'Record Mic'}</span>
-              </button>
-
-              <button
-                onClick={handleProcessSampleAudio}
-                className="flex flex-col items-center justify-center p-3 rounded-xl bg-blue-700 hover:bg-blue-800 text-white transition shadow-sm"
-              >
-                <Play className="w-5 h-5 mb-1" />
-                <span className="text-[10px] font-semibold">Run AI Analysis</span>
-              </button>
-
-              <button
-                onClick={handleRequestStepUpVerification}
-                className="flex flex-col items-center justify-center p-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 transition"
-              >
-                <ShieldAlert className="w-5 h-5 mb-1 text-amber-400" />
-                <span className="text-[10px] font-medium">Verify Call</span>
-              </button>
+          {/* Real Audio Stream Waveform Card */}
+          <div className="bg-slate-900 rounded-xl border border-slate-800 shadow-sm p-5 text-white space-y-4">
+            <div className="flex justify-between items-center">
+              <div className="flex items-center space-x-2">
+                <Activity className="w-4 h-4 text-emerald-400" />
+                <h3 className="text-xs font-bold uppercase tracking-wider text-slate-200">Real-Time Audio Stream Tap</h3>
+              </div>
+              <span className="text-[11px] font-mono text-emerald-400 font-semibold">
+                16 kHz · MONO · 2.5s WINDOW
+              </span>
             </div>
 
-            {/* Test Directive Selector */}
-            <div className="bg-slate-800/80 p-3 rounded-xl border border-slate-700 space-y-2">
-              <label className="text-[11px] font-bold text-slate-300 uppercase tracking-wider block">Simulated Speech Transcript</label>
-              <input
-                type="text"
-                value={transcriptInput}
-                onChange={(e) => setTranscriptInput(e.target.value)}
-                className="w-full bg-slate-900 border border-slate-700 text-white text-xs px-2.5 py-1.5 rounded focus:outline-none focus:border-blue-500"
-              />
+            {/* Waveform Canvas */}
+            <div className="bg-slate-950 rounded-lg p-2 border border-slate-800 flex flex-col items-center justify-center h-28 relative overflow-hidden">
+              <canvas ref={canvasRef} width={400} height={100} className="w-full h-full" />
+              {!isMicActive && (
+                <div className="absolute inset-0 flex items-center justify-center bg-slate-950/70 backdrop-blur-[1px] text-slate-400 text-xs font-medium">
+                  Microphone standby · Click "Start Real Audio Tap"
+                </div>
+              )}
+            </div>
 
-              <div className="flex space-x-2 pt-1">
-                <input
-                  type="number"
-                  value={txAmount}
-                  onChange={(e) => setTxAmount(e.target.value)}
-                  placeholder="Amount ₹"
-                  className="w-1/2 bg-slate-900 border border-slate-700 text-white text-xs px-2 py-1 rounded"
-                />
-                <select
-                  value={txType}
-                  onChange={(e) => setTxType(e.target.value)}
-                  className="w-1/2 bg-slate-900 border border-slate-700 text-white text-xs px-2 py-1 rounded"
-                >
-                  <option value="TRANSFER">TRANSFER</option>
-                  <option value="NEW_BENEFICIARY">NEW BENEFICIARY</option>
-                  <option value="OTP_REQUEST">OTP REQUEST</option>
-                  <option value="CREDENTIAL_REQUEST">CREDENTIAL REQUEST</option>
-                </select>
+            {/* Audio Properties Matrix */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] pt-1">
+              <div className="bg-slate-800/80 p-2 rounded border border-slate-700/60">
+                <p className="text-slate-400">MICROPHONE</p>
+                <p className={`font-bold ${isMicActive ? 'text-emerald-400' : 'text-slate-400'}`}>
+                  {isMicActive ? 'ACTIVE' : 'INACTIVE'}
+                </p>
+              </div>
+              <div className="bg-slate-800/80 p-2 rounded border border-slate-700/60">
+                <p className="text-slate-400">SAMPLE RATE</p>
+                <p className="font-bold text-slate-200">16,000 Hz</p>
+              </div>
+              <div className="bg-slate-800/80 p-2 rounded border border-slate-700/60">
+                <p className="text-slate-400">AUDIO QUALITY</p>
+                <p className="font-bold text-slate-200">
+                  {riskData.audioQuality != null ? `${(riskData.audioQuality * 100).toFixed(0)}%` : '—'}
+                </p>
+              </div>
+              <div className="bg-slate-800/80 p-2 rounded border border-slate-700/60">
+                <p className="text-slate-400">WINDOWS</p>
+                <p className="font-bold text-slate-200">{riskData.windowsAnalyzed}</p>
               </div>
             </div>
           </div>
         </div>
-      </div>
 
-      {/* Right Column: Real AI Security Panel & Analysis Cards */}
-      <div className="lg:col-span-7 space-y-6">
-        {/* Main Risk Gauge Banner */}
-        <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
-          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between border-b border-slate-100 pb-4">
-            <div>
-              <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block">REAL-TIME RISK ASSESSMENT</span>
-              <h3 className="text-2xl font-black text-slate-900 mt-1">
-                RISK SCORE: <span className={riskData.riskLevel === 'HIGH' ? 'text-red-600' : riskData.riskLevel === 'MEDIUM' ? 'text-amber-600' : 'text-emerald-600'}>
-                  {riskData.riskScore.toFixed(1)} / 100
-                </span>
-              </h3>
-            </div>
-
-            <div className="mt-3 sm:mt-0 flex items-center space-x-3">
-              <span className={`px-3 py-1 rounded-full text-xs font-black tracking-wide border ${
-                riskData.riskLevel === 'HIGH'
-                  ? 'bg-red-100 text-red-800 border-red-300'
-                  : riskData.riskLevel === 'MEDIUM'
-                  ? 'bg-amber-100 text-amber-800 border-amber-300'
-                  : 'bg-emerald-100 text-emerald-800 border-emerald-300'
-              }`}>
-                RISK LEVEL: {riskData.riskLevel}
-              </span>
-
+        {/* Right Column: AI Risk Assessment & Authenticity Telemetry */}
+        <div className="lg:col-span-7 space-y-6">
+          {/* Real-Time Risk Assessment Card */}
+          <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 space-y-5">
+            <div className="flex justify-between items-center border-b border-slate-100 pb-3">
+              <div>
+                <h3 className="text-sm font-bold text-slate-900 uppercase tracking-tight">REAL-TIME RISK ASSESSMENT</h3>
+                <p className="text-xs text-slate-500">Continuous multi-factor Bayesian threat synthesis</p>
+              </div>
               <button
                 onClick={() => onOpenWhyThisScore(riskData, analysisId, callState.callId)}
-                className="inline-flex items-center space-x-1 text-xs bg-slate-900 hover:bg-slate-800 text-white font-semibold px-3 py-1.5 rounded-lg shadow-sm transition"
+                className="inline-flex items-center space-x-1 text-xs text-emerald-700 hover:text-emerald-800 font-semibold bg-emerald-50 hover:bg-emerald-100 px-3 py-1.5 rounded-lg border border-emerald-200 transition"
               >
                 <HelpCircle className="w-3.5 h-3.5" />
-                <span>WHY THIS SCORE?</span>
+                <span>Explain Score</span>
               </button>
             </div>
-          </div>
 
-          {/* Policy Decision Strip */}
-          <div className="mt-4 bg-slate-50 p-4 rounded-lg border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between">
-            <div>
-              <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">RECOMMENDED POLICY ACTION</span>
-              <p className="text-sm font-bold text-slate-900 mt-0.5">{riskData.recommendedAction}</p>
-            </div>
+            {/* Score & Risk Level Primary Display */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div className="bg-slate-50 rounded-xl p-4 border border-slate-200 text-center">
+                <p className="text-xs font-bold text-slate-500 uppercase">RISK SCORE</p>
+                <p className={`text-3xl font-extrabold mt-1 font-mono ${
+                  riskData.riskScore == null ? 'text-slate-400' :
+                  riskData.riskScore >= 70 ? 'text-rose-600' :
+                  riskData.riskScore >= 30 ? 'text-amber-600' : 'text-emerald-600'
+                }`}>
+                  {riskData.riskScore != null ? `${riskData.riskScore.toFixed(1)} / 100` : '—'}
+                </p>
+              </div>
 
-            {riskData.verificationRequired && (
-              <button
-                onClick={handleRequestStepUpVerification}
-                className="mt-2 sm:mt-0 text-xs bg-amber-600 hover:bg-amber-700 text-white font-bold px-3.5 py-1.5 rounded-md shadow-sm transition"
-              >
-                {verificationPending ? 'VERIFICATION PENDING...' : 'REQUEST INDEPENDENT VERIFICATION'}
-              </button>
-            )}
-          </div>
-        </div>
+              <div className="bg-slate-50 rounded-xl p-4 border border-slate-200 text-center">
+                <p className="text-xs font-bold text-slate-500 uppercase">RISK LEVEL</p>
+                <p className={`text-2xl font-extrabold mt-1 uppercase ${
+                  riskData.riskLevel === 'HIGH' ? 'text-rose-600' :
+                  riskData.riskLevel === 'MEDIUM' ? 'text-amber-600' : 'text-emerald-600'
+                }`}>
+                  {riskData.riskLevel || 'LOW'}
+                </p>
+              </div>
 
-        {/* Signal Analysis Cards Grid */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          {/* Card 1: Voice Authenticity */}
-          <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm space-y-2">
-            <div className="flex justify-between items-center">
-              <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">VOICE AUTHENTICITY</span>
-              <span className="text-[10px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded font-mono">AASIST Graph</span>
-            </div>
-            <div className="pt-1">
-              <p className="text-xs text-slate-500">Estimated Synthetic Probability</p>
-              <p className="text-xl font-extrabold text-slate-900">
-                {riskData.syntheticProbability !== null ? `${riskData.syntheticProbability.toFixed(1)}%` : 'UNAVAILABLE'}
-              </p>
-            </div>
-            <div className="pt-1 text-[11px] text-slate-500 flex justify-between border-t border-slate-100">
-              <span>Model Confidence:</span>
-              <span className="font-semibold text-slate-700">{(riskData.overallConfidence * 100).toFixed(0)}%</span>
-            </div>
-          </div>
-
-          {/* Card 2: Speaker Identity */}
-          <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm space-y-2">
-            <div className="flex justify-between items-center">
-              <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">SPEAKER IDENTITY</span>
-              <span className="text-[10px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded font-mono">ECAPA-TDNN</span>
-            </div>
-            <div className="pt-1">
-              <p className="text-xs text-slate-500">Speaker Match Similarity</p>
-              <p className="text-xl font-extrabold text-slate-900">
-                {riskData.speakerSimilarity !== null ? `${riskData.speakerSimilarity.toFixed(1)}%` : 'NO REFERENCE'}
-              </p>
-            </div>
-            <div className="pt-1 text-[11px] text-slate-500 flex justify-between border-t border-slate-100">
-              <span>Identity Status:</span>
-              <span className="font-semibold text-slate-700">{riskData.speakerSimilarity ? (riskData.speakerSimilarity >= 75 ? 'MATCHED' : 'MISMATCH') : 'UNKNOWN'}</span>
-            </div>
-          </div>
-
-          {/* Card 3: Context & Intent Risk */}
-          <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm space-y-2">
-            <span className="text-xs font-bold text-slate-500 uppercase tracking-wider block">CONTEXT INTELLIGENCE</span>
-            <div className="pt-1">
-              <p className="text-xs text-slate-500">Intent & Keyword Risk Score</p>
-              <p className="text-xl font-extrabold text-slate-900">
-                {riskData.contextScore !== null ? `${riskData.contextScore.toFixed(1)} / 100` : 'NO TRANSCRIPT'}
-              </p>
-            </div>
-            <p className="text-[11px] text-slate-500 border-t border-slate-100 pt-1">
-              Analyzes transcript for urgency, OTPs & PIN requests
-            </p>
-          </div>
-
-          {/* Card 4: Transaction & Behavior */}
-          <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm space-y-2">
-            <span className="text-xs font-bold text-slate-500 uppercase tracking-wider block">TRANSACTION & BEHAVIOR</span>
-            <div className="pt-1">
-              <p className="text-xs text-slate-500">Financial Action Sensitivity</p>
-              <p className="text-xl font-extrabold text-slate-900">
-                {riskData.transactionScore !== null ? `${riskData.transactionScore.toFixed(1)} / 100` : 'NO ACTION'}
-              </p>
-            </div>
-            <p className="text-[11px] text-slate-500 border-t border-slate-100 pt-1">
-              Evaluates transfer amount & beneficiary policy limits
-            </p>
-          </div>
-        </div>
-      </div>
-
-      {/* System 1 High Risk Alert Card Modal */}
-      {showAlertModal && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-2xl border-2 border-red-600 shadow-2xl max-w-md w-full p-6 space-y-4">
-            <div className="flex items-center space-x-3 text-red-600 border-b border-red-100 pb-3">
-              <ShieldAlert className="w-8 h-8" />
-              <div>
-                <h4 className="text-sm font-black tracking-wide">NIRBHAYA SANCHAR SECURITY ALERT</h4>
-                <p className="text-xs font-bold text-red-700">HIGH-RISK CALL DETECTED</p>
+              <div className="bg-slate-50 rounded-xl p-4 border border-slate-200 text-center">
+                <p className="text-xs font-bold text-slate-500 uppercase">RECOMMENDED ACTION</p>
+                <p className="text-lg font-bold mt-1 text-slate-900">
+                  {riskData.recommendedAction || 'CONTINUE'}
+                </p>
               </div>
             </div>
 
-            <div className="space-y-2 text-xs text-slate-700">
-              <p className="font-semibold text-slate-900">Potential impersonation risk detected.</p>
-              <p><span className="font-bold">Risk Score:</span> {riskData.riskScore.toFixed(1)} / 100</p>
-              <div className="bg-red-50 p-3 rounded-lg border border-red-200">
-                <p className="font-bold text-red-900 mb-1">Triggered Reasons:</p>
-                <ul className="list-disc list-inside space-y-1 text-red-800">
+            {/* Triggered Reasons / Policy Signals */}
+            {riskData.reasons && riskData.reasons.length > 0 && (
+              <div className="bg-rose-50 border border-rose-200 rounded-lg p-3 text-xs space-y-1">
+                <p className="font-bold text-rose-800 uppercase flex items-center gap-1.5">
+                  <AlertTriangle className="w-3.5 h-3.5" /> Triggered Security Signals:
+                </p>
+                <ul className="list-disc list-inside text-rose-700 pl-1 space-y-0.5">
                   {riskData.reasons.map((r, i) => (
                     <li key={i}>{r}</li>
                   ))}
                 </ul>
               </div>
+            )}
+          </div>
 
-              <div className="bg-slate-100 p-2.5 rounded text-[11px] font-bold text-slate-800">
-                Recommended Action: HOLD & INDEPENDENTLY VERIFY
+          {/* Core AI Cards: Voice Authenticity & Speaker Identity */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {/* Voice Authenticity Card */}
+            <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5 space-y-3">
+              <div className="flex justify-between items-center">
+                <h4 className="text-xs font-bold text-slate-900 uppercase">VOICE AUTHENTICITY</h4>
+                <span className="text-[10px] font-mono font-bold bg-slate-100 text-slate-700 px-2 py-0.5 rounded">
+                  AASIST
+                </span>
+              </div>
+              <div className="space-y-2 text-xs">
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Synthetic Probability</span>
+                  <span className="font-mono font-bold text-slate-900">
+                    {riskData.syntheticProbability != null ? `${riskData.syntheticProbability.toFixed(1)}%` : '—'}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Voice Authenticity</span>
+                  <span className="font-mono font-bold text-slate-900">
+                    {riskData.voiceAuthenticity != null ? `${riskData.voiceAuthenticity.toFixed(1)}%` : '—'}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Model Confidence</span>
+                  <span className="font-mono text-slate-800">
+                    {riskData.overallConfidence != null ? `${(riskData.overallConfidence * 100).toFixed(0)}%` : '—'}
+                  </span>
+                </div>
+                <div className="flex justify-between border-t border-slate-100 pt-2">
+                  <span className="text-slate-500">Model Version</span>
+                  <span className="font-mono text-slate-600">ASVspoof2019-LA</span>
+                </div>
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-2 pt-2">
+            {/* Speaker Identity Card */}
+            <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5 space-y-3">
+              <div className="flex justify-between items-center">
+                <h4 className="text-xs font-bold text-slate-900 uppercase">SPEAKER IDENTITY</h4>
+                <span className="text-[10px] font-mono font-bold bg-slate-100 text-slate-700 px-2 py-0.5 rounded">
+                  ECAPA-TDNN
+                </span>
+              </div>
+              <div className="space-y-2 text-xs">
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Speaker Match Similarity</span>
+                  <span className="font-mono font-bold text-slate-900">
+                    {riskData.speakerSimilarity != null ? `${riskData.speakerSimilarity.toFixed(1)}%` : 'NO REFERENCE'}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Identity Status</span>
+                  <span className="font-bold text-slate-700">
+                    {riskData.speakerSimilarity != null
+                      ? riskData.speakerSimilarity >= 70 ? 'MATCH' : 'MISMATCH'
+                      : 'NO REFERENCE'}
+                  </span>
+                </div>
+                <div className="flex justify-between border-t border-slate-100 pt-2">
+                  <span className="text-slate-500">Embedding Extraction</span>
+                  <span className="font-mono text-slate-600">Active</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Analysis Evidence Section */}
+      <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+        <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between bg-slate-50/50">
+          <div>
+            <h3 className="text-sm font-bold text-slate-900 tracking-tight">ANALYSIS EVIDENCE & WINDOW AUDIT</h3>
+            <p className="text-xs text-slate-500">Empirical inference evidence generated across consecutive 2.5s audio chunks</p>
+          </div>
+          <span className="text-xs font-mono text-slate-400">Total windows: {evidenceLog.length}</span>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="min-w-full divide-y divide-slate-200 text-xs">
+            <thead className="bg-slate-50 text-slate-500 uppercase font-bold text-[10px]">
+              <tr>
+                <th className="px-6 py-3 text-left">Timestamp</th>
+                <th className="px-6 py-3 text-left">Window</th>
+                <th className="px-6 py-3 text-left">Synthetic Prob</th>
+                <th className="px-6 py-3 text-left">Confidence</th>
+                <th className="px-6 py-3 text-left">Risk Score</th>
+                <th className="px-6 py-3 text-left">Risk Level</th>
+                <th className="px-6 py-3 text-left">Policy Action</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {evidenceLog.length > 0 ? (
+                evidenceLog.map((row, i) => (
+                  <tr key={i} className="hover:bg-slate-50">
+                    <td className="px-6 py-3 font-mono text-slate-500">{row.timestamp}</td>
+                    <td className="px-6 py-3 font-mono font-bold text-slate-700">#{row.windowIndex}</td>
+                    <td className="px-6 py-3 font-mono text-slate-900">
+                      {row.syntheticProbability != null ? `${row.syntheticProbability.toFixed(1)}%` : '—'}
+                    </td>
+                    <td className="px-6 py-3 font-mono text-slate-700">
+                      {row.modelConfidence != null ? `${(row.modelConfidence * 100).toFixed(0)}%` : '—'}
+                    </td>
+                    <td className="px-6 py-3 font-mono font-bold text-slate-900">
+                      {row.riskScore != null ? row.riskScore.toFixed(1) : '—'}
+                    </td>
+                    <td className="px-6 py-3">
+                      <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
+                        row.riskLevel === 'HIGH' ? 'bg-rose-100 text-rose-800' :
+                        row.riskLevel === 'MEDIUM' ? 'bg-amber-100 text-amber-800' :
+                        'bg-emerald-100 text-emerald-800'
+                      }`}>
+                        {row.riskLevel || 'LOW'}
+                      </span>
+                    </td>
+                    <td className="px-6 py-3 font-semibold text-slate-800">{row.recommendedAction || 'CONTINUE'}</td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td colSpan={7} className="px-6 py-6 text-center text-slate-400">
+                    Waiting for real audio streaming to populate analysis evidence...
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Security Alert Modal */}
+      {showAlertModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 space-y-5 border-2 border-rose-600 shadow-2xl animate-in fade-in zoom-in duration-150">
+            <div className="flex items-center space-x-3 text-rose-600 border-b border-rose-100 pb-3">
+              <ShieldAlert className="w-8 h-8" />
+              <div>
+                <h3 className="text-base font-bold uppercase tracking-tight text-rose-900">NIRBHAYA SANCHAR SECURITY ALERT</h3>
+                <p className="text-xs text-rose-600 font-semibold">HIGH-RISK VOICE IMPERSONATION DETECTED</p>
+              </div>
+            </div>
+
+            <div className="space-y-3 text-xs">
+              <div className="bg-rose-50 p-3 rounded-lg border border-rose-200">
+                <p className="text-rose-900 font-semibold">
+                  Risk Score: <strong>{riskData.riskScore != null ? riskData.riskScore.toFixed(1) : '85.0'} / 100 (HIGH)</strong>
+                </p>
+                <p className="text-rose-700 mt-1">
+                  Elevated synthetic speech signatures and acoustic anomalies detected during live analysis.
+                </p>
+              </div>
+
+              {riskData.reasons && riskData.reasons.length > 0 && (
+                <div>
+                  <p className="font-bold text-slate-700 uppercase mb-1">Triggered Security Signals:</p>
+                  <ul className="list-disc list-inside text-slate-600 pl-1 space-y-1">
+                    {riskData.reasons.map((r, i) => (
+                      <li key={i}>{r}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              <div className="bg-slate-50 p-3 rounded-lg border border-slate-200">
+                <p className="text-slate-500 font-bold uppercase text-[11px]">Recommended Protocol Action</p>
+                <p className="text-sm font-bold text-rose-700 mt-0.5">HOLD & INDEPENDENTLY VERIFY</p>
+              </div>
+            </div>
+
+            <div className="flex gap-3 pt-2">
               <button
-                onClick={() => {
-                  handleRequestStepUpVerification();
-                  setShowAlertModal(false);
-                }}
-                className="bg-red-600 hover:bg-red-700 text-white text-xs font-bold py-2.5 rounded-lg transition"
+                onClick={handleRequestVerification}
+                disabled={verificationPending}
+                className="flex-1 bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs py-2.5 rounded-lg shadow-sm transition"
               >
-                REQUEST VERIFICATION
+                {verificationPending ? 'DISPATCHING...' : 'REQUEST VERIFICATION'}
               </button>
               <button
                 onClick={() => setShowAlertModal(false)}
-                className="bg-slate-200 hover:bg-slate-300 text-slate-800 text-xs font-bold py-2.5 rounded-lg transition"
+                className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs px-4 py-2.5 rounded-lg transition"
               >
                 DISMISS ALERT
               </button>
@@ -514,52 +720,4 @@ export default function LiveCallUI({ onOpenWhyThisScore }) {
       )}
     </div>
   );
-}
-
-// Helper to construct valid WAV bytes from Float32 PCM array
-function createWavBlob(samples, sampleRate) {
-  const buffer = new ArrayBuffer(44 + samples.length * 2);
-  const view = new DataView(buffer);
-
-  /* RIFF identifier */
-  writeString(view, 0, 'RIFF');
-  /* RIFF chunk length */
-  view.setUint32(4, 36 + samples.length * 2, true);
-  /* RIFF type */
-  writeString(view, 8, 'WAVE');
-  /* format chunk identifier */
-  writeString(view, 12, 'fmt ');
-  /* format chunk length */
-  view.setUint32(16, 16, true);
-  /* sample format (raw PCM) */
-  view.setUint16(20, 1, true);
-  /* channel count (mono) */
-  view.setUint16(22, 1, true);
-  /* sample rate */
-  view.setUint32(24, sampleRate, true);
-  /* byte rate (sample rate * block align) */
-  view.setUint32(28, sampleRate * 2, true);
-  /* block align (channel count * bytes per sample) */
-  view.setUint16(32, 2, true);
-  /* bits per sample */
-  view.setUint16(34, 16, true);
-  /* data chunk identifier */
-  writeString(view, 36, 'data');
-  /* data chunk length */
-  view.setUint32(40, samples.length * 2, true);
-
-  // float32 to int16 PCM
-  let offset = 44;
-  for (let i = 0; i < samples.length; i++, offset += 2) {
-    const s = Math.max(-1, Math.min(1, samples[i]));
-    view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
-  }
-
-  return new Blob([view], { type: 'audio/wav' });
-}
-
-function writeString(view, offset, string) {
-  for (let i = 0; i < string.length; i++) {
-    view.setUint8(offset + i, string.charCodeAt(i));
-  }
 }

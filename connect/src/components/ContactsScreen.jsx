@@ -77,14 +77,36 @@ export default function ContactsScreen({ profile, onManualJoin, onLogout, onConn
   }, [profile.id, profile.name, onConnected])
 
   async function callContact(contact) {
+    if (!profile?.id || !profile?.name) return setNotice('Authentication error. Please log in again.')
+    if (!contact?.id || !contact?.name) return setNotice('Please select a valid contact.')
     const online = contact.online_status !== 'offline'
     if (!online) return setNotice('User is currently unavailable.')
-    if (calls.some((call) => [call.caller.id, call.receiver.id].includes(profile.id) && ['ringing', 'calling', 'accepted'].includes(normalizeStatus(call.status)))) return setNotice('You are already in a call.')
     try {
-      const result = await createCall(contact.id)
+      const callerSlug = String(profile.id || 'caller').replace(/[^a-zA-Z0-9]/g, '').slice(0, 8) || 'caller'
+      const receiverSlug = String(contact.id || 'receiver').replace(/[^a-zA-Z0-9]/g, '').slice(0, 8) || 'receiver'
+      const roomName = `nirbhaya-${callerSlug}-${receiverSlug}-${Date.now().toString(36)}`
+      
+      console.info(`[CALL-INIT] caller=${profile.name} (${profile.id}) receiver=${contact.name} (${contact.id}) roomName=${roomName}`)
+      
+      const result = await createCall({
+        caller: { id: profile.id, name: profile.name, email: profile.email || '', phone: profile.phone || '' },
+        receiver: { id: contact.id, name: contact.name, email: contact.email || '', phone: contact.phone || '' },
+        roomName,
+        receiverId: contact.id,
+      })
+
+      if (!result?.call?.id || !result?.call?.roomName) {
+        throw new Error('Call creation failed on the server.')
+      }
+
+      console.info(`[CALL-INIT] Call created successfully: id=${result.call.id} room=${result.call.roomName}`)
       addHistory({ id: result.call.id, contactId: contact.id, name: contact.name, direction: 'outgoing', time: Date.now() })
-      setNotice(`Calling ${contact.name}...`)
-    } catch (error) { setNotice(error.message) }
+      
+      // Connect caller directly to the LiveKit voice room and AI security engine
+      onConnected({ name: profile.name, roomName: result.call.roomName, callId: result.call.id })
+    } catch (error) {
+      setNotice(error.message || 'Call failed.')
+    }
   }
 
   async function act(callId, action) {

@@ -9,9 +9,17 @@ export function getApiBase() {
 
 export function getSessionUser() {
   try {
-    const raw = localStorage.getItem(AUTH_KEY)
+    const raw = localStorage.getItem(AUTH_KEY) || localStorage.getItem('nirbhaya-user-profile')
     if (!raw) return null
-    return JSON.parse(raw)
+    const user = JSON.parse(raw)
+    if (!user || typeof user !== 'object') return null
+    return {
+      id: user.id || (user.name ? user.name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') : 'user'),
+      name: user.name || 'User',
+      email: user.email || '',
+      phone: user.phone || '',
+      online_status: user.online_status || 'online',
+    }
   } catch {
     return null
   }
@@ -22,9 +30,12 @@ export function getAuthToken() {
 }
 
 export function setSessionUser(user, token) {
-  localStorage.setItem(AUTH_KEY, JSON.stringify(user))
+  if (user) {
+    localStorage.setItem(AUTH_KEY, JSON.stringify(user))
+    localStorage.setItem('nirbhaya-user-profile', JSON.stringify(user))
+  }
   if (token) localStorage.setItem(TOKEN_KEY, token)
-  else localStorage.removeItem(TOKEN_KEY)
+  else if (token === null) localStorage.removeItem(TOKEN_KEY)
 }
 
 export async function authenticatedRequest(path, options = {}) {
@@ -46,6 +57,7 @@ export async function authenticatedRequest(path, options = {}) {
 export function clearSessionUser() {
   localStorage.removeItem(AUTH_KEY)
   localStorage.removeItem(TOKEN_KEY)
+  localStorage.removeItem('nirbhaya-user-profile')
 }
 
 export async function registerUser(payload) {
@@ -57,6 +69,9 @@ export async function registerUser(payload) {
   })
   const result = await response.json().catch(() => ({}))
   if (!response.ok) throw new Error(result.error || 'Registration failed.')
+  if (result.user && result.token) {
+    setSessionUser(result.user, result.token)
+  }
   return result.user
 }
 
@@ -69,5 +84,8 @@ export async function loginUser(payload) {
   })
   const result = await response.json().catch(() => ({}))
   if (!response.ok) throw new Error(result.error || 'Login failed.')
+  if (result.user && result.token) {
+    setSessionUser(result.user, result.token)
+  }
   return result.user
 }

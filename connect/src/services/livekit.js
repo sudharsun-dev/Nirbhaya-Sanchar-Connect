@@ -49,7 +49,7 @@ export async function connectToRoom(roomName, identity, handlers = {}) {
   let token
   try {
     const authorization = await getLiveKitToken(roomName, identity)
-    if (!authorization.serverUrl.startsWith('wss://') || !authorization.serverUrl.includes('livekit.cloud')) throw new Error('Invalid LIVEKIT_URL')
+    if (!authorization.serverUrl.startsWith('wss://') && !authorization.serverUrl.startsWith('ws://')) throw new Error('Invalid LIVEKIT_URL')
     token = authorization.token
     await room.connect(authorization.serverUrl, token, { autoSubscribe: true })
   } catch (error) {
@@ -57,7 +57,7 @@ export async function connectToRoom(roomName, identity, handlers = {}) {
     if (error.message.startsWith('Token server') || error.message.startsWith('Token API') || error.message === 'Invalid LIVEKIT_URL') throw error
     throw new Error('Unable to connect to the voice room.')
   }
-  console.info('[LIVEKIT] connected')
+  console.info(`[LIVEKIT] room=${roomName} connected=true`)
   handlers.onParticipantChange?.(null, room)
   let microphone
   try {

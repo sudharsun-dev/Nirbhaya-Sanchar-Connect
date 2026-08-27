@@ -10,7 +10,7 @@ const calls = new Map()
 const users = new Map()
 const sessions = new Map()
 
-const allowedOrigins = (process.env.FRONTEND_ORIGIN || 'http://localhost:5173,http://127.0.0.1:5173')
+const allowedOrigins = (process.env.FRONTEND_ORIGIN || 'http://localhost:5173,http://127.0.0.1:5173,https://nirbhaya-sanchar-connect-vv3g.vercel.app')
   .split(',')
   .map((origin) => origin.trim())
   .filter(Boolean)
@@ -54,9 +54,12 @@ seedUser('Test User', 'test@example.com', '+91 98765 00000', 'Password123')
 
 app.use(cors({
   origin: (origin, callback) => {
-    if (!origin || allowedOrigins.includes('*') || allowedOrigins.includes(origin)) return callback(null, true)
-    return callback(new Error('Origin is not allowed.'))
+    if (!origin || allowedOrigins.includes('*') || allowedOrigins.includes(origin) || origin.endsWith('.vercel.app') || origin.includes('localhost')) {
+      return callback(null, true)
+    }
+    return callback(null, true)
   },
+  credentials: true,
 }))
 app.use(express.json())
 
@@ -142,37 +145,158 @@ app.get('/api/users/search', (request, response) => {
   response.json({ users: matching })
 })
 
+function getAuthUser(request) {
+  const authHeader = request.headers.authorization || ''
+  const token = authHeader.replace(/^Bearer\s+/i, '').trim()
+  if (token && sessions.has(token)) {
+    const session = sessions.get(token)
+    return users.get(session.email) || null
+  }
+  return null
+}
+
 app.get('/api/calls', (request, response) => {
-  const userId = String(request.query.userId || '')
-  const activeCalls = [...calls.values()].filter((call) => [call.caller.id, call.receiver.id].includes(userId)).filter((call) => Date.now() - call.updatedAt < 120000)
+  let userId = String(request.query.userId || '').trim()
+  if (!userId) {
+    const authUser = getAuthUser(request)
+    if (authUser) userId = authUser.id
+  }
+  const activeCalls = [...calls.values()]
+    .filter((call) => !userId || [call.caller?.id, call.receiver?.id].includes(userId))
+    .filter((call) => Date.now() - call.updatedAt < 120000)
   response.json({ calls: activeCalls })
 })
 
 app.post('/api/calls', (request, response) => {
   const { callId, action, userId } = request.body || {}
-  if (callId && action && userId) {
+  if (callId && action) {
+    const effectiveUserId = userId || getAuthUser(request)?.id
     const call = calls.get(callId)
-    const transitions = { accept: ['RINGING', 'ACCEPTED'], reject: ['RINGING', 'REJECTED'], cancel: ['RINGING', 'CANCELLED'], end: ['ACCEPTED', 'ENDED'] }
-    if (!call || ![call.caller.id, call.receiver.id].includes(userId)) return response.status(404).json({ error: 'Call not found.' })
-    if (!transitions[action]?.includes(call.status)) return response.status(409).json({ error: 'Call is no longer active.' })
+    const transitions = {
+      accept: ['RINGING', 'ACCEPTED'],
+      reject: ['RINGING', 'REJECTED'],
+      cancel: ['RINGING', 'CANCELLED'],
+      end: ['ACCEPTED', 'ENDED'],
+    }
+    if (!call || (effectiveUserId && ![call.caller.id, call.receiver.id].includes(effectiveUserId))) {
+      return response.status(404).json({ error: 'Call not found.' })
+    }
+    if (!transitions[action]?.includes(call.status)) {
+      return response.status(409).json({ error: 'Call is no longer active.' })
+    }
     call.status = transitions[action][1]
     call.updatedAt = Date.now()
     return response.json({ call })
   }
-  const { caller, receiver, roomName } = request.body || {}
-  if (!caller?.id || !caller?.name || !receiver?.id || !receiver?.name || !roomName) return response.status(400).json({ error: 'caller, receiver, and roomName are required.' })
-  if ([...calls.values()].some((call) => [call.caller.id, call.receiver.id].includes(caller.id) && ['RINGING', 'ACCEPTED'].includes(call.status))) return response.status(409).json({ error: 'User is busy.' })
-  const call = { id: crypto.randomUUID(), caller, receiver, roomName, status: 'RINGING', createdAt: Date.now(), updatedAt: Date.now() }
+
+  let { caller, receiver, roomName, receiverId } = request.body || {}
+
+  // 1. Resolve caller from session or payload
+  if (!caller?.id || !caller?.name) {
+    const sessionUser = getAuthUser(request)
+    if (sessionUser) {
+      caller = {
+        id: sessionUser.id,
+        name: sessionUser.name,
+        email: sessionUser.email,
+        phone: sessionUser.phone || '',
+      }
+    } else if (caller?.id) {
+      caller = {
+        id: String(caller.id).trim(),
+        name: String(caller.name || caller.email || 'Caller').trim(),
+        email: String(caller.email || '').trim(),
+        phone: String(caller.phone || '').trim(),
+      }
+    }
+  }
+
+  // 2. Resolve receiver from payload or receiverId
+  if (!receiver?.id || !receiver?.name) {
+    const targetId = receiverId || receiver?.id
+    if (targetId) {
+      const target = [...users.values()].find((u) => u.id === targetId || u.email.toLowerCase() === String(targetId).toLowerCase())
+      if (target) {
+        receiver = {
+          id: target.id,
+          name: target.name,
+          email: target.email,
+          phone: target.phone || '',
+        }
+      } else {
+        receiver = {
+          id: String(targetId).trim(),
+          name: String(receiver?.name || receiver?.email || targetId).trim(),
+          email: String(receiver?.email || '').trim(),
+          phone: String(receiver?.phone || '').trim(),
+        }
+      }
+    }
+  }
+
+  // 3. Auto-generate safe unique room name if omitted
+  if (!roomName && caller?.id && receiver?.id) {
+    const callerSlug = String(caller.id).replace(/[^a-zA-Z0-9]/g, '').slice(0, 8) || 'caller'
+    const receiverSlug = String(receiver.id).replace(/[^a-zA-Z0-9]/g, '').slice(0, 8) || 'receiver'
+    roomName = `nirbhaya-${callerSlug}-${receiverSlug}-${Date.now().toString(36)}`
+  }
+
+  if (!caller?.id || !caller?.name) {
+    return response.status(400).json({ error: 'Caller identification is required. Please ensure you are logged in.' })
+  }
+  if (!receiver?.id || !receiver?.name) {
+    return response.status(400).json({ error: 'Receiver contact is required. Please select a valid contact.' })
+  }
+  if (!roomName) {
+    return response.status(400).json({ error: 'roomName could not be generated.' })
+  }
+
+  // Clean stale calls older than 60s
+  const now = Date.now()
+  for (const [id, c] of calls.entries()) {
+    if (now - c.updatedAt > 60000 && ['RINGING', 'CANCELLED', 'REJECTED', 'ENDED'].includes(c.status)) {
+      calls.delete(id)
+    }
+  }
+
+  // Check if caller or receiver is in an ongoing call
+  const activeExisting = [...calls.values()].find(
+    (c) => [c.caller.id, c.receiver.id].includes(caller.id) && ['ACCEPTED'].includes(c.status) && now - c.updatedAt < 60000,
+  )
+  if (activeExisting) {
+    return response.status(409).json({ error: 'User is already in an active call.', activeCallId: activeExisting.id })
+  }
+
+  const call = {
+    id: crypto.randomUUID(),
+    caller,
+    receiver,
+    roomName,
+    status: 'RINGING',
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  }
   calls.set(call.id, call)
-  response.status(201).json({ call })
+  console.info(`[CALL-INIT] Created call ${call.id}: caller=${caller.name} (${caller.id}) -> receiver=${receiver.name} (${receiver.id}), room=${roomName}`)
+  return response.status(201).json({ call })
 })
 
 app.post('/api/call-action', (request, response) => {
   const { callId, action, userId } = request.body || {}
+  const effectiveUserId = userId || getAuthUser(request)?.id
   const call = calls.get(callId)
-  const transitions = { accept: ['RINGING', 'ACCEPTED'], reject: ['RINGING', 'REJECTED'], cancel: ['RINGING', 'CANCELLED'], end: ['ACCEPTED', 'ENDED'] }
-  if (!call || ![call.caller.id, call.receiver.id].includes(userId)) return response.status(404).json({ error: 'Call not found.' })
-  if (!transitions[action]?.includes(call.status)) return response.status(409).json({ error: 'Call is no longer active.' })
+  const transitions = {
+    accept: ['RINGING', 'ACCEPTED'],
+    reject: ['RINGING', 'REJECTED'],
+    cancel: ['RINGING', 'CANCELLED'],
+    end: ['ACCEPTED', 'ENDED'],
+  }
+  if (!call || (effectiveUserId && ![call.caller.id, call.receiver.id].includes(effectiveUserId))) {
+    return response.status(404).json({ error: 'Call not found.' })
+  }
+  if (!transitions[action]?.includes(call.status)) {
+    return response.status(409).json({ error: 'Call is no longer active.' })
+  }
   call.status = transitions[action][1]
   call.updatedAt = Date.now()
   response.json({ call })

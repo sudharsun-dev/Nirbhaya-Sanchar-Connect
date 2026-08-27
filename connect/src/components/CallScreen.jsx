@@ -138,7 +138,12 @@ export default function CallScreen({ name, roomName, callId, onEnded }) {
       } catch (reason) {
         if (active) {
           setStatus('error')
-          setError(reason.message || 'Unable to join this call.')
+          const msg = String(reason?.message || '')
+          if (msg.toLowerCase().includes('permission') || msg.toLowerCase().includes('notallowed') || msg.toLowerCase().includes('microphone')) {
+            setError('Microphone permission required for secure voice analysis.')
+          } else {
+            setError(msg || 'Unable to join this call.')
+          }
           setSecurityState((prev) => ({ ...prev, status: 'OFFLINE' }))
         }
       }
@@ -217,7 +222,7 @@ export default function CallScreen({ name, roomName, callId, onEnded }) {
                 : securityState.status === 'ACTIVE'
                 ? 'AI Voice Monitoring Active'
                 : securityState.status === 'OFFLINE'
-                ? 'AI Security: Offline'
+                ? 'AI SECURITY ENGINE OFFLINE'
                 : 'AI Voice Shield Initializing...'}
             </strong>
             <small>

@@ -1,69 +1,125 @@
-const configuredBase = import.meta.env.VITE_API_BASE_URL ? import.meta.env.VITE_API_BASE_URL.replace(/\/$/, '') : '';
-const API_BASE = `${configuredBase}/api/v1`;
+// System 2 API Client
+
+function resolveApiBase() {
+  const configured = import.meta.env.VITE_API_BASE_URL ? import.meta.env.VITE_API_BASE_URL.replace(/\/$/, '') : '';
+  if (!configured) {
+    return import.meta.env.DEV ? 'http://localhost:8000/api/v1' : 'https://nirbhaya-sanchar-connect.onrender.com/api/v1';
+  }
+  return configured.endsWith('/api/v1') ? configured : `${configured}/api/v1`;
+}
+
+export function resolveWsBase() {
+  const configuredWs = import.meta.env.VITE_WS_BASE_URL || import.meta.env.VITE_ENGINE_WS_URL;
+  if (configuredWs) {
+    let ws = configuredWs.replace(/\/$/, '');
+    if (!ws.endsWith('/ws')) ws = `${ws}/ws`;
+    return ws;
+  }
+  const apiBase = resolveApiBase();
+  let wsUrl = apiBase.replace(/^http:/i, 'ws:').replace(/^https:/i, 'wss:');
+  wsUrl = wsUrl.replace(/\/api\/v1\/?$/i, '');
+  if (!wsUrl.endsWith('/ws')) {
+    wsUrl = `${wsUrl}/ws`;
+  }
+  return wsUrl;
+}
+
+export const API_BASE = resolveApiBase();
+export const WS_BASE = resolveWsBase();
 
 export async function fetchHealth() {
-  const res = await fetch(`${API_BASE}/health`);
-  return res.json();
+  try {
+    const res = await fetch(`${API_BASE}/health`);
+    if (!res.ok) throw new Error(`Health check returned ${res.status}`);
+    return await res.json();
+  } catch (err) {
+    console.warn('[SYSTEM 2 API] Health check offline:', err.message);
+    return { status: 'OFFLINE', services: {} };
+  }
 }
 
 export async function fetchDashboardStats() {
-  const res = await fetch(`${API_BASE}/dashboard/stats`);
-  return res.json();
+  try {
+    const res = await fetch(`${API_BASE}/dashboard/stats`);
+    if (!res.ok) throw new Error(`Stats returned ${res.status}`);
+    return await res.json();
+  } catch (err) {
+    console.warn('[SYSTEM 2 API] Stats fetch failed:', err.message);
+    return {
+      active_calls: 0,
+      calls_analyzed: 0,
+      high_risk_calls: 0,
+      pending_verifications: 0,
+      recent_calls: [],
+    };
+  }
 }
 
 export async function startAnalysis(callData) {
   const res = await fetch(`${API_BASE}/analysis/start`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(callData)
+    body: JSON.stringify(callData),
   });
-  return res.json();
+  if (!res.ok) throw new Error(`Start analysis failed with HTTP ${res.status}`);
+  return await res.json();
 }
 
 export async function sendAudioChunk(analysisId, blob, windowIndex = 1, transcriptOverride = '') {
   const formData = new FormData();
   formData.append('file', blob, 'chunk.wav');
-  formData.append('window_index', windowIndex);
+  formData.append('window_index', String(windowIndex));
   if (transcriptOverride) {
     formData.append('transcript_override', transcriptOverride);
   }
 
   const res = await fetch(`${API_BASE}/analysis/${analysisId}/audio`, {
     method: 'POST',
-    body: formData
+    body: formData,
   });
-  return res.json();
+  if (!res.ok) throw new Error(`Send audio chunk failed with HTTP ${res.status}`);
+  return await res.json();
 }
 
 export async function getAnalysisRisk(analysisId) {
   const res = await fetch(`${API_BASE}/analysis/${analysisId}/risk`);
-  return res.json();
+  if (!res.ok) throw new Error(`Get risk failed with HTTP ${res.status}`);
+  return await res.json();
 }
 
 export async function getAnalysisExplanation(analysisId) {
   const res = await fetch(`${API_BASE}/analysis/${analysisId}/explanation`);
-  return res.json();
+  if (!res.ok) throw new Error(`Get explanation failed with HTTP ${res.status}`);
+  return await res.json();
 }
 
 export async function evaluatePolicy(analysisId, policyProfile = 'BANK') {
   const res = await fetch(`${API_BASE}/policy/evaluate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ analysis_id: analysisId, policy_profile: policyProfile })
+    body: JSON.stringify({ analysis_id: analysisId, policy_profile: policyProfile }),
   });
-  return res.json();
+  if (!res.ok) throw new Error(`Evaluate policy failed with HTTP ${res.status}`);
+  return await res.json();
 }
 
 export async function requestVerification(analysisId, callId, method = 'TRUSTED_CALLBACK') {
   const res = await fetch(`${API_BASE}/verification/request`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ analysis_id: analysisId, call_id: callId, verification_method: method })
+    body: JSON.stringify({ analysis_id: analysisId, call_id: callId, verification_method: method }),
   });
-  return res.json();
+  if (!res.ok) throw new Error(`Verification request failed with HTTP ${res.status}`);
+  return await res.json();
 }
 
 export async function fetchAuditLogs() {
-  const res = await fetch(`${API_BASE}/audit/logs`);
-  return res.json();
+  try {
+    const res = await fetch(`${API_BASE}/audit/logs`);
+    if (!res.ok) throw new Error(`Audit logs returned ${res.status}`);
+    return await res.json();
+  } catch (err) {
+    console.warn('[SYSTEM 2 API] Audit logs failed:', err.message);
+    return [];
+  }
 }

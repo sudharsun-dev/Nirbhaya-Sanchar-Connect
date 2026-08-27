@@ -3,17 +3,31 @@
 const defaultHttp = 'http://localhost:8000/api/v1';
 const defaultWs = 'ws://localhost:8000/ws';
 
-const configuredHttp = import.meta.env.VITE_ENGINE_HTTP_URL || defaultHttp;
-const configuredWs = import.meta.env.VITE_ENGINE_WS_URL || (
-  configuredHttp.startsWith('https://')
-    ? configuredHttp.replace(/^https:\/\//, 'wss://').replace(/\/api\/v1\/?$/, '/ws')
-    : configuredHttp.startsWith('http://')
-    ? configuredHttp.replace(/^http:\/\//, 'ws://').replace(/\/api\/v1\/?$/, '/ws')
-    : defaultWs
-);
+function resolveEngineHttp() {
+  const raw = (import.meta.env.VITE_ENGINE_HTTP_URL || defaultHttp).replace(/\/$/, '');
+  if (!raw.endsWith('/api/v1')) {
+    return `${raw}/api/v1`;
+  }
+  return raw;
+}
 
-const ENGINE_HTTP_BASE = configuredHttp.replace(/\/$/, '');
-const ENGINE_WS_BASE = configuredWs.replace(/\/$/, '');
+function resolveEngineWs() {
+  if (import.meta.env.VITE_ENGINE_WS_URL) {
+    let ws = import.meta.env.VITE_ENGINE_WS_URL.replace(/\/$/, '');
+    if (!ws.endsWith('/ws')) ws = `${ws}/ws`;
+    return ws;
+  }
+  const httpUrl = (import.meta.env.VITE_ENGINE_HTTP_URL || defaultHttp).replace(/\/$/, '');
+  let wsUrl = httpUrl.replace(/^http:/i, 'ws:').replace(/^https:/i, 'wss:');
+  wsUrl = wsUrl.replace(/\/api\/v1\/?$/i, '');
+  if (!wsUrl.endsWith('/ws')) {
+    wsUrl = `${wsUrl}/ws`;
+  }
+  return wsUrl;
+}
+
+const ENGINE_HTTP_BASE = resolveEngineHttp();
+const ENGINE_WS_BASE = resolveEngineWs();
 
 let socket = null;
 let listeners = [];
@@ -68,15 +82,23 @@ export function connectEngineStream(analysisId, onEventCallback) {
     socket = null;
   }
 
-  socket = new WebSocket(`${ENGINE_WS_BASE}/analysis/${analysisId}`);
+  const wsUrl = `${ENGINE_WS_BASE}/analysis/${analysisId}`;
+  console.info(`[ENGINE] Connecting to WebSocket: ${wsUrl}`);
+  socket = new WebSocket(wsUrl);
 
   socket.onopen = () => {
-    console.info('[SYSTEM 1] Connected to System 2 Engine WebSocket:', analysisId);
+    console.info(`[ENGINE] websocket=${wsUrl} connected=true`);
   };
 
   socket.onmessage = (event) => {
     try {
       const data = JSON.parse(event.data);
+      if (data.event === 'RISK_UPDATED') {
+        console.info(`[RISK] score=${data.risk_score} level=${data.risk_level} action=${data.recommended_action}`);
+        if (data.synthetic_probability !== undefined) {
+          console.info(`[AASIST] inference completed synthetic_probability=${data.synthetic_probability}%`);
+        }
+      }
       if (onEventCallback) onEventCallback(data);
       listeners.forEach((listener) => listener(data));
     } catch (e) {
