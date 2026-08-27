@@ -90,11 +90,13 @@ export function connectEngineStream(analysisId, onEventCallback) {
   }
 
   const wsUrl = `${ENGINE_WS_BASE}/analysis/${analysisId}`;
+  console.info(`[TRACE] WS_URL=${wsUrl} call_id=${analysisId}`);
   console.info(`[S1-WS-CONNECT] call_id=${analysisId} url=${wsUrl}`);
   console.info(`[DEBUG-ENGINE-WS] URL=${wsUrl} call_id=${analysisId}`);
   socket = new WebSocket(wsUrl);
 
   socket.onopen = () => {
+    console.info(`[TRACE] WS_CONNECTED call_id=${analysisId}`);
     console.info(`[DEBUG-ENGINE-WS] CONNECTED call_id=${analysisId}`);
     console.info(`[ENGINE] websocket=${wsUrl} connected=true`);
 
@@ -105,6 +107,7 @@ export function connectEngineStream(analysisId, onEventCallback) {
         const queuedBuf = pendingAudioQueue.shift();
         try {
           socket.send(queuedBuf);
+          console.info(`[TRACE] AUDIO_CHUNK_SENT call_id=${analysisId} flushed=true`);
         } catch (err) {
           console.warn('[SYSTEM 1] Failed to flush queued audio buffer', err);
         }
@@ -118,6 +121,7 @@ export function connectEngineStream(analysisId, onEventCallback) {
       console.info(`[S1-TELEMETRY-RECEIVED] call_id=${analysisId} event=${data.event}`, data);
       console.info(`[DEBUG-ENGINE-WS] MESSAGE RECEIVED`, { event: data.event, payload: data });
       if (data.event === 'RISK_UPDATED') {
+        console.info(`[TRACE] RISK_UPDATED call_id=${analysisId} risk=${data.risk_score} synthetic=${data.synthetic_probability}% level=${data.risk_level} action=${data.recommended_action}`);
         console.info(`[RISK] score=${data.risk_score} level=${data.risk_level} action=${data.recommended_action}`);
         if (data.synthetic_probability !== undefined) {
           console.info(`[AASIST] inference completed synthetic_probability=${data.synthetic_probability}%`);
@@ -157,18 +161,27 @@ export function onRiskEvent(callback) {
 }
 
 export async function notifyEngineStartCall(callPayload) {
+  const url = `${ENGINE_HTTP_BASE}/analysis/start`;
   try {
+    console.info(`[TRACE] CALL_ID=${callPayload.call_id}`);
+    console.info(`[TRACE] ANALYSIS_START_REQUEST url=${url} call_id=${callPayload.call_id}`);
+    console.info(`[ANALYSIS-START] URL=${url} call_id=${callPayload.call_id} origin=${typeof window !== 'undefined' ? window.location.origin : 'unknown'}`);
     console.info(`[S1-CALL-START] call_id=${callPayload.call_id} caller=${callPayload.caller_id} receiver=${callPayload.receiver_id}`);
-    const response = await fetch(`${ENGINE_HTTP_BASE}/analysis/start`, {
+    
+    const response = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(callPayload),
     });
+    
+    console.info(`[ANALYSIS-START] status=${response.status} ok=${response.ok}`);
     if (!response.ok) {
       console.warn(`[SYSTEM 1] Engine start API returned HTTP ${response.status}`);
       return null;
     }
-    return await response.json();
+    const data = await response.json();
+    console.info(`[TRACE] ANALYSIS_ID=${data.analysis_id || callPayload.call_id} status=${data.status}`);
+    return data;
   } catch (err) {
     console.warn('[SYSTEM 1] Unable to reach System 2 Engine API', err);
     return null;
