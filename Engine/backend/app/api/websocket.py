@@ -78,6 +78,8 @@ async def websocket_analysis_endpoint(websocket: WebSocket, analysis_id: str):
         while True:
             # Receive binary audio chunk or JSON message from client
             message = await websocket.receive()
+            if message.get("type") == "websocket.disconnect":
+                break
 
             if "bytes" in message:
                 start_pipeline_time = time.time()
@@ -292,9 +294,6 @@ async def websocket_analysis_endpoint(websocket: WebSocket, analysis_id: str):
         manager.disconnect(analysis_id, websocket)
     except Exception as e:
         logger.error(f"[WS EXCEPTION] WebSocket error: {e}")
-        await manager.broadcast_event(analysis_id, {
-            "event": "ERROR",
-            "analysis_id": analysis_id,
-            "error_message": str(e)
-        })
+        manager.disconnect(analysis_id, websocket)
+    finally:
         manager.disconnect(analysis_id, websocket)
