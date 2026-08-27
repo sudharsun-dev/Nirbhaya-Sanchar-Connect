@@ -1,6 +1,8 @@
 import { authenticatedRequest } from './auth'
 
-const apiBase = import.meta.env.DEV ? (import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001') : ''
+const apiBase = import.meta.env.VITE_API_BASE_URL 
+  ? import.meta.env.VITE_API_BASE_URL.replace(/\/$/, '') 
+  : (import.meta.env.DEV ? 'http://localhost:3001' : '')
 
 async function request(path, options = {}) {
   let response

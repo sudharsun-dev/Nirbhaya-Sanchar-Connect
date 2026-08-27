@@ -1,0 +1,21 @@
+version: '3.8'
+
+services:
+  engine-backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: nirbhaya_engine_backend
+    ports:
+      - "8000:8000"
+    environment:
+      - APP_NAME=NIRBHAYA_SANCHAR_ENGINE
+      - ENVIRONMENT=production
+      - API_HOST=0.0.0.0
+      - API_PORT=8000
+      - DATABASE_URL=sqlite+aiosqlite:///./nirbhaya_engine.db
+    volumes:
+      - engine_data:/app/data
+
+volumes:
+  engine_data:

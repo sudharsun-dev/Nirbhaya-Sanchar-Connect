@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { setSessionUser } from '../services/auth'
+import { setSessionUser, getApiBase } from '../services/auth'
 
 export default function AuthScreen({ onAuthenticated, onManualJoin }) {
   const [mode, setMode] = useState('login')
@@ -22,7 +22,8 @@ export default function AuthScreen({ onAuthenticated, onManualJoin }) {
     setError('')
     setLoading(true)
     try {
-      const endpoint = mode === 'register' ? '/api/auth/register' : '/api/auth/login'
+      const apiBase = getApiBase()
+      const endpoint = `${apiBase}${mode === 'register' ? '/api/auth/register' : '/api/auth/login'}`
       const payload = mode === 'register'
         ? { name: form.name, phone: form.phone, email: form.email, password: form.password }
         : { email: form.email, password: form.password }

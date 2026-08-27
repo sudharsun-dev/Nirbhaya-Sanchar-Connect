@@ -1,0 +1,49 @@
+services:
+  # ----------------------------------------------------
+  # SYSTEM 1: Node.js Express Token & Signaling Backend
+  # ----------------------------------------------------
+  - type: web
+    name: nirbhaya-connect-server
+    env: node
+    rootDir: connect/server
+    buildCommand: npm install
+    startCommand: npm start
+    plan: starter
+    envVars:
+      - key: PORT
+        value: 3001
+      - key: LIVEKIT_URL
+        sync: false
+      - key: LIVEKIT_API_KEY
+        sync: false
+      - key: LIVEKIT_API_SECRET
+        sync: false
+      - key: FRONTEND_ORIGIN
+        sync: false
+      - key: SYSTEM1_CALLBACK_SECRET
+        sync: false
+
+  # ----------------------------------------------------
+  # SYSTEM 2: Python FastAPI + WebSocket + AI Engine
+  # ----------------------------------------------------
+  - type: web
+    name: nirbhaya-ai-engine
+    env: docker
+    dockerfilePath: Engine/Dockerfile
+    dockerContext: Engine
+    plan: standard
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: CORS_ORIGINS
+        sync: false
+      - key: SYSTEM1_BASE_URL
+        sync: false
+      - key: SYSTEM1_CALLBACK_URL
+        sync: false
+      - key: SYSTEM1_CALLBACK_SECRET
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true

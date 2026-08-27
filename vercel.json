@@ -1,5 +1,0 @@
-{
-  "buildCommand": "npm --prefix connect run build",
-  "outputDirectory": "connect/dist",
-  "installCommand": "npm install && npm --prefix connect install"
-}

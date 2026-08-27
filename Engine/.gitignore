@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.env
+.venv
+env/
+venv/
+ENV/
+*.db
+*.sqlite3
+nirbhaya_engine.db
+
+frontend/node_modules/
+frontend/dist/
+.pytest_cache/
+.DS_Store

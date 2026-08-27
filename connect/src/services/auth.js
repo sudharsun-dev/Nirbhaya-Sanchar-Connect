@@ -1,6 +1,12 @@
 const AUTH_KEY = 'nirbhaya-session'
 const TOKEN_KEY = 'nirbhaya-auth-token'
 
+export function getApiBase() {
+  return import.meta.env.VITE_API_BASE_URL
+    ? import.meta.env.VITE_API_BASE_URL.replace(/\/$/, '')
+    : (import.meta.env.DEV ? 'http://localhost:3001' : '')
+}
+
 export function getSessionUser() {
   try {
     const raw = localStorage.getItem(AUTH_KEY)
@@ -23,7 +29,9 @@ export function setSessionUser(user, token) {
 
 export async function authenticatedRequest(path, options = {}) {
   const token = getAuthToken()
-  const response = await fetch(path, {
+  const apiBase = getApiBase()
+  const fullUrl = path.startsWith('http') ? path : `${apiBase}${path}`
+  const response = await fetch(fullUrl, {
     ...options,
     headers: {
       ...(options.body ? { 'Content-Type': 'application/json' } : {}),
@@ -41,7 +49,8 @@ export function clearSessionUser() {
 }
 
 export async function registerUser(payload) {
-  const response = await fetch('/api/auth/register', {
+  const apiBase = getApiBase()
+  const response = await fetch(`${apiBase}/api/auth/register`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -52,7 +61,8 @@ export async function registerUser(payload) {
 }
 
 export async function loginUser(payload) {
-  const response = await fetch('/api/auth/login', {
+  const apiBase = getApiBase()
+  const response = await fetch(`${apiBase}/api/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
