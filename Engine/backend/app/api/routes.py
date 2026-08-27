@@ -62,7 +62,7 @@ async def get_system_health():
     sys1_status = "OFFLINE"
     try:
         async with httpx.AsyncClient(timeout=1.5) as client:
-            resp = await client.get(f"{settings.SYSTEM1_BASE_URL}/health")
+            resp = await client.get(f"{settings.resolved_system1_base_url}/health")
             if resp.status_code == 200:
                 sys1_status = "ONLINE"
             else:
@@ -92,25 +92,35 @@ async def get_system_health():
             ),
             "speaker_verifier": ServiceHealthStatus(status=speaker_status, details={"model": speaker_verifier.model_name}),
             "asr_engine": ServiceHealthStatus(status=asr_status, details={"provider": settings.ASR_PROVIDER, "model": settings.ASR_MODEL}),
-            "system1_connect": ServiceHealthStatus(status=sys1_status, details={"url": settings.SYSTEM1_BASE_URL})
+            "system1_connect": ServiceHealthStatus(status=sys1_status, details={"url": settings.resolved_system1_base_url})
         }
     )
+
+@router.get("/cors-test")
+async def cors_test(request: Request):
+    """Dedicated test endpoint to verify CORS origin reflection."""
+    origin = request.headers.get("origin", "unknown")
+    return {
+        "status": "ok",
+        "origin": origin,
+        "environment": settings.ENVIRONMENT
+    }
 
 @router.get("/system1/health")
 async def get_system1_health():
     """Returns System 1 connectivity status."""
     try:
         async with httpx.AsyncClient(timeout=2.0) as client:
-            resp = await client.get(f"{settings.SYSTEM1_BASE_URL}/health")
+            resp = await client.get(f"{settings.resolved_system1_base_url}/health")
             return {
                 "system1_status": "ONLINE" if resp.status_code == 200 else "DEGRADED",
-                "system1_url": settings.SYSTEM1_BASE_URL,
+                "system1_url": settings.resolved_system1_base_url,
                 "response": resp.json() if resp.status_code == 200 else None
             }
     except Exception as e:
         return {
             "system1_status": "OFFLINE",
-            "system1_url": settings.SYSTEM1_BASE_URL,
+            "system1_url": settings.resolved_system1_base_url,
             "error": str(e)
         }
 

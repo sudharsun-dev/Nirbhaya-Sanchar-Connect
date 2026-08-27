@@ -35,15 +35,44 @@ class Settings(BaseSettings):
 
     @property
     def cors_origins_list(self) -> List[str]:
+        defaults = [
+            "https://nirbhaya-sanchar-connect-gik8.vercel.app",
+            "https://nirbhaya-sanchar-connect-vv3g.vercel.app",
+            "https://nirbhaya-sanchar-connect.onrender.com",
+            "http://localhost:5173",
+            "http://localhost:5174",
+            "http://localhost:3000",
+            "http://localhost:3001",
+            "http://127.0.0.1:5173",
+            "http://127.0.0.1:5174"
+        ]
         if not self.CORS_ORIGINS or self.CORS_ORIGINS == "*":
-            return ["*"]
-        return [origin.strip() for origin in self.CORS_ORIGINS.split(",") if origin.strip()]
+            return defaults
+        origins = [origin.strip() for origin in self.CORS_ORIGINS.split(",") if origin.strip() and origin.strip() != "*"]
+        for d in defaults:
+            if d not in origins:
+                origins.append(d)
+        return origins
 
     # System 1 Integration
     SYSTEM1_BASE_URL: str = "https://nirbhaya-connect-server.onrender.com"
     SYSTEM1_API_KEY: Optional[str] = os.getenv("SYSTEM1_API_KEY")
     SYSTEM1_CALLBACK_URL: str = "https://nirbhaya-connect-server.onrender.com/api/nirbhaya/callback"
     SYSTEM1_CALLBACK_SECRET: Optional[str] = os.getenv("SYSTEM1_CALLBACK_SECRET")
+
+    @property
+    def resolved_system1_base_url(self) -> str:
+        url = self.SYSTEM1_BASE_URL or ""
+        if not url or (("localhost" in url or "127.0.0.1" in url) and self.ENVIRONMENT == "production"):
+            return "https://nirbhaya-connect-server.onrender.com"
+        return url
+
+    @property
+    def resolved_system1_callback_url(self) -> str:
+        url = self.SYSTEM1_CALLBACK_URL or ""
+        if not url or (("localhost" in url or "127.0.0.1" in url) and self.ENVIRONMENT == "production"):
+            return "https://nirbhaya-connect-server.onrender.com/api/nirbhaya/callback"
+        return url
 
     # AI Models Metadata & Settings
     VOICE_MODEL_PROVIDER: str = "AASIST"

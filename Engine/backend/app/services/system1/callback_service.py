@@ -9,7 +9,7 @@ class CallbackService:
     Dispatches real-time risk updates, policy decisions, and security alerts to System 1.
     """
     def __init__(self):
-        self.callback_url = settings.SYSTEM1_CALLBACK_URL
+        self.callback_url = settings.resolved_system1_callback_url
         self.api_key = settings.SYSTEM1_API_KEY
 
     async def send_callback(
