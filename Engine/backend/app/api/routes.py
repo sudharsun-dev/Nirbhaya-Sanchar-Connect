@@ -37,14 +37,15 @@ from app.services.system1.callback_service import callback_service
 router = APIRouter()
 
 @router.get("/health", response_model=SystemHealthResponse)
-async def get_system_health(db: AsyncSession = Depends(get_db)):
+async def get_system_health():
     """
     Returns real, empirically tested system health status across all backend services and AI engines.
     """
     # Check Database connection
     db_status = "ONLINE"
     try:
-        await db.execute(select(Call).limit(1))
+        async with AsyncSessionLocal() as session:
+            await session.execute(select(Call).limit(1))
     except Exception as e:
         db_status = f"OFFLINE ({str(e)})"
 

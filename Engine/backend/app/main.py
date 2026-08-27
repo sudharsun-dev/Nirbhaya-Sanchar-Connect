@@ -1,3 +1,4 @@
+import os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -10,9 +11,24 @@ from app.api.websocket import ws_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Initialize database tables on startup
-    await init_db()
+    print("[STARTUP] NIRBHAYA SANCHAR ENGINE STARTING")
+    print(f"[STARTUP] ENVIRONMENT={settings.ENVIRONMENT}")
+    print(f"[STARTUP] PORT={settings.API_PORT}")
+    print(f"[STARTUP] DATABASE CONFIGURED={'true' if settings.DATABASE_URL else 'false'}")
+    print(f"[STARTUP] MODEL PATH={settings.VOICE_MODEL_PATH}")
+    model_exists = os.path.exists(settings.VOICE_MODEL_PATH) if settings.VOICE_MODEL_PATH else False
+    print(f"[STARTUP] MODEL EXISTS={str(model_exists).lower()}")
+
+    print("[STARTUP] DATABASE INIT START")
+    try:
+        await init_db()
+        print("[STARTUP] DATABASE INIT SUCCESS")
+    except Exception as db_err:
+        print(f"[STARTUP ERROR] Database initialization failed: {db_err}")
+
+    print("[STARTUP] ENGINE READY")
     yield
+    print("[SHUTDOWN] NIRBHAYA SANCHAR ENGINE STOPPING")
 
 app = FastAPI(
     title="Nirbhaya Sanchar Engine (System 2)",

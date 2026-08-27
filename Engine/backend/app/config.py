@@ -41,9 +41,9 @@ class Settings(BaseSettings):
 
     # System 1 Integration
     SYSTEM1_BASE_URL: str = "https://nirbhaya-connect-server.onrender.com"
-    SYSTEM1_API_KEY: Optional[str] = "nirbhaya_system1_api_key_2026"
+    SYSTEM1_API_KEY: Optional[str] = os.getenv("SYSTEM1_API_KEY")
     SYSTEM1_CALLBACK_URL: str = "https://nirbhaya-connect-server.onrender.com/api/nirbhaya/callback"
-    SYSTEM1_CALLBACK_SECRET: Optional[str] = "nirbhaya_system1_api_key_2026"
+    SYSTEM1_CALLBACK_SECRET: Optional[str] = os.getenv("SYSTEM1_CALLBACK_SECRET")
 
     # AI Models Metadata & Settings
     VOICE_MODEL_PROVIDER: str = "AASIST"
@@ -65,8 +65,8 @@ class Settings(BaseSettings):
     SPEAKER_MODEL_PATH: Optional[str] = None
 
     # Auth & Security
-    JWT_SECRET: str = "nirbhaya_secret_key_change_in_production_2026_safe"
-    INTERNAL_API_KEY: str = "nirbhaya_internal_api_key_2026"
+    JWT_SECRET: str = os.getenv("JWT_SECRET", "nirbhaya_dev_jwt_secret_token_2026")
+    INTERNAL_API_KEY: Optional[str] = os.getenv("INTERNAL_API_KEY")
 
     # Alerts & Notifications
     SMTP_HOST: Optional[str] = None
