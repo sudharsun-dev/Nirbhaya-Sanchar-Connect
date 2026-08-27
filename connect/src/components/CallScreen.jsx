@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef, useCallback, useMemo } from 'react'
 import { connectToRoom, disconnectFromRoom } from '../services/livekit'
 import { connectEngineStream, notifyEngineStartCall, startAudioStreamToEngine } from '../services/engineClient'
 import CallControls from './CallControls'
@@ -51,6 +51,8 @@ export default function CallScreen({ name, roomName, callId, onEnded }) {
 
     async function initCall() {
       try {
+        console.info(`[VOICE-ANALYSIS] CALL_ID=${effectiveCallId}`);
+        console.info(`[VOICE-ANALYSIS] STARTING_ANALYSIS call_id=${effectiveCallId}`);
         // 1. Notify System 2 of call start
         notifyEngineStartCall({
           call_id: effectiveCallId,
@@ -198,6 +200,12 @@ export default function CallScreen({ name, roomName, callId, onEnded }) {
     setRetryCount((count) => count + 1)
   }
 
+  const handleToggleSecurityDrawer = useCallback(() => {
+    console.info('[VOICE-ANALYSIS] BUTTON_CLICKED');
+    console.info(`[VOICE-ANALYSIS] CALL_ID=${effectiveCallId}`);
+    setShowSecurityDrawer((prev) => !prev);
+  }, [effectiveCallId]);
+
   // Determine Security Badge Colors
   const riskVal = securityState.riskScore !== null && !isNaN(Number(securityState.riskScore)) ? Number(securityState.riskScore) : null
   const isHighRisk = securityState.riskLevel === 'HIGH' || (riskVal !== null && riskVal >= 70)
@@ -219,7 +227,7 @@ export default function CallScreen({ name, roomName, callId, onEnded }) {
         {/* Live Security HUD Indicator Bar */}
         <div
           className={`security-hud-pill ${isHighRisk ? 'high-risk' : isMediumRisk ? 'medium-risk' : securityState.status === 'OFFLINE' ? 'offline' : 'low-risk'}`}
-          onClick={() => setShowSecurityDrawer(!showSecurityDrawer)}
+          onClick={handleToggleSecurityDrawer}
           role="button"
           tabIndex={0}
         >

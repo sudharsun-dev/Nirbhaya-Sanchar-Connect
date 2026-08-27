@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Mic, MicOff, Volume2, ShieldAlert, AlertCircle, HelpCircle,
   Play, Square, CheckCircle2, RefreshCw, AlertTriangle, ShieldCheck,
