@@ -14,7 +14,13 @@ class Settings(BaseSettings):
     REDIS_URL: Optional[str] = None
 
     # CORS Allowed Origins
-    CORS_ORIGINS: str = "https://nirbhaya-sanchar-connect-vv3g.vercel.app,http://localhost:5173,http://localhost:5174,http://127.0.0.1:5173,http://127.0.0.1:5174,*"
+    CORS_ORIGINS: str = (
+        "https://nirbhaya-sanchar-connect-gik8.vercel.app,"
+        "https://nirbhaya-sanchar-connect-vv3g.vercel.app,"
+        "https://nirbhaya-sanchar-connect.onrender.com,"
+        "http://localhost:5173,http://localhost:5174,http://localhost:3000,http://localhost:3001,"
+        "http://127.0.0.1:5173,http://127.0.0.1:5174"
+    )
 
     @property
     def cors_origins_list(self) -> List[str]:

@@ -22,15 +22,14 @@ app = FastAPI(
 )
 
 # CORS configuration
-cors_origins = settings.cors_origins_list
-allow_all = "*" in cors_origins
-
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"] if allow_all else cors_origins,
-    allow_credentials=False if allow_all else True,
-    allow_methods=["*"],
+    allow_origins=settings.cors_origins_list,
+    allow_origin_regex=r"https://nirbhaya-sanchar-connect.*\.vercel\.app|https://.*\.onrender\.com|http://localhost:.*|http://127\.0\.0\.1:.*",
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
 # Exception handler for clean error responses

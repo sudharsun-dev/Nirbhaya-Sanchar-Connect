@@ -291,25 +291,12 @@ export function startAudioStreamToEngine(analysisId, mediaStreamTrack, options =
           socket.send(wavBuffer);
           console.info(`[S1-WS-SEND] call_id=${analysisId} chunk=${windowIndex} bytes=${wavBuffer.byteLength}`);
           console.info(`[DEBUG-ENGINE-WS] BINARY AUDIO SENT`, { chunk: windowIndex, bytes: wavBuffer.byteLength });
-        } else if (socket && socket.readyState === WebSocket.CONNECTING) {
-          // Queue buffer until WebSocket finishes handshake
-          console.info(`[SYSTEM 1] WebSocket connecting, queueing audio chunk #${windowIndex} for call_id=${analysisId}`);
+        } else {
+          // Queue buffer until WebSocket finishes handshake/reconnects
+          console.info(`[SYSTEM 1] WebSocket buffering, queueing audio chunk #${windowIndex} for call_id=${analysisId}`);
           if (pendingAudioQueue.length < 10) {
             pendingAudioQueue.push(wavBuffer);
           }
-        } else {
-          // Fallback HTTP multipart upload
-          const blob = new Blob([wavBuffer], { type: 'audio/wav' });
-          const formData = new FormData();
-          formData.append('file', blob, `chunk_${windowIndex}.wav`);
-          formData.append('window_index', String(windowIndex));
-
-          fetch(`${ENGINE_HTTP_BASE}/analysis/${analysisId}/audio`, {
-            method: 'POST',
-            body: formData,
-          }).catch((err) => {
-            console.warn('[SYSTEM 1] HTTP audio chunk upload fallback error', err);
-          });
         }
 
         options.onChunkSent?.({
