@@ -10,7 +10,12 @@ async function request(path, options = {}) {
     throw new Error('Signaling service unavailable.')
   }
   const body = await response.json().catch(() => ({}))
-  if (!response.ok) throw new Error(body.error || 'Signaling request failed.')
+  if (!response.ok) {
+    if (response.status === 401) throw new Error('Session expired. Please log in again.')
+    if (response.status === 404) throw new Error('User or call not found.')
+    if (response.status === 500) throw new Error('Call service temporarily unavailable.')
+    throw new Error(body.error || 'Signaling request failed.')
+  }
   return body
 }
 
@@ -20,5 +25,5 @@ export function createCall(receiverId) {
     body: JSON.stringify({ receiverId }),
   })
 }
-export function getCalls() { return request('/api/calls') }
+export function getCalls(options) { return request('/api/calls', options) }
 export function updateCall(callId, action) { return request('/api/calls', { method: 'POST', body: JSON.stringify({ callId, action }) }) }

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { createCall, getCalls, updateCall } from '../services/signaling'
 import { authenticatedRequest } from '../services/auth'
 
@@ -22,8 +22,6 @@ export default function ContactsScreen({ profile, onManualJoin, onLogout, onConn
   const [calls, setCalls] = useState([])
   const [notice, setNotice] = useState('')
   const [history, setHistory] = useState(() => readHistory())
-  const [busy, setBusy] = useState(false)
-  const [contacts, setContacts] = useState([])
   const [search, setSearch] = useState('')
   const [searchResults, setSearchResults] = useState([])
 
@@ -36,17 +34,6 @@ export default function ContactsScreen({ profile, onManualJoin, onLogout, onConn
     setHistory(next)
     localStorage.setItem('nirbhaya-history', JSON.stringify(next))
   }
-
-  const loadContacts = useCallback(async () => {
-    try {
-      const response = await authenticatedRequest(`/api/contacts?userId=${encodeURIComponent(profile.id)}`)
-      const result = await response.json().catch(() => ({ contacts: [] }))
-      if (!response.ok) throw new Error(result.error || 'Unable to load contacts.')
-      setContacts(result.contacts || [])
-    } catch (error) {
-      setNotice(error.message)
-    }
-  }, [profile.id])
 
   async function searchUsers() {
     if (!search.trim()) return setSearchResults([])
@@ -61,14 +48,14 @@ export default function ContactsScreen({ profile, onManualJoin, onLogout, onConn
   }
 
   useEffect(() => {
-    loadContacts()
-  }, [loadContacts])
-
-  useEffect(() => {
     let active = true
+    let polling = false
+    const controller = new AbortController()
     async function poll() {
+      if (polling) return
+      polling = true
       try {
-        const result = await getCalls()
+        const result = await getCalls({ signal: controller.signal })
         if (active) {
           const now = Date.now()
           setCalls(result.calls)
@@ -77,11 +64,15 @@ export default function ContactsScreen({ profile, onManualJoin, onLogout, onConn
           const accepted = result.calls.find((call) => call.caller.id === profile.id && normalizeStatus(call.status) === 'accepted')
           if (accepted) onConnected({ name: profile.name, roomName: accepted.roomName, callId: accepted.id })
         }
-      } catch (error) { if (active) setNotice(error.message) }
+      } catch (error) {
+        if (active && error.name !== 'AbortError') setNotice(error.message)
+      } finally {
+        polling = false
+      }
     }
     poll()
-    const timer = setInterval(poll, 1000)
-    return () => { active = false; clearInterval(timer) }
+    const timer = setInterval(poll, 2000)
+    return () => { active = false; controller.abort(); clearInterval(timer) }
   }, [profile.id, profile.name, onConnected])
 
   async function callContact(contact) {
@@ -93,19 +84,6 @@ export default function ContactsScreen({ profile, onManualJoin, onLogout, onConn
       const result = await createCall(contact.id)
       addHistory({ id: result.call.id, name: contact.name, direction: 'outgoing', time: Date.now() })
       setNotice(`Calling ${contact.name}...`)
-    } catch (error) { setNotice(error.message) } finally { setBusy(false) }
-  }
-
-  async function addContact(contact) {
-    try {
-      const response = await authenticatedRequest('/api/contacts', {
-        method: 'POST',
-        body: JSON.stringify({ userId: profile.id, contactId: contact.id }),
-      })
-      const result = await response.json().catch(() => ({}))
-      if (!response.ok) throw new Error(result.error || 'Unable to add contact.')
-      setNotice(`${contact.name} was added to your contacts.`)
-      await loadContacts()
     } catch (error) { setNotice(error.message) }
   }
 
@@ -118,8 +96,6 @@ export default function ContactsScreen({ profile, onManualJoin, onLogout, onConn
     } catch (error) { setNotice(error.message) }
   }
 
-  const list = contacts.length ? contacts : []
-
   return <section className="contacts-layout">
     <div className="contacts-main"><div className="contacts-heading"><div><p className="eyebrow">AVAILABLE CHANNELS</p><h1>Contacts</h1></div><div className="profile-chip"><span>{profile.name.slice(0, 1).toUpperCase()}</span>{profile.name}</div></div>
       <div className="search-row" style={{ display: 'flex', gap: '12px', marginBottom: '22px' }}>
@@ -127,10 +103,10 @@ export default function ContactsScreen({ profile, onManualJoin, onLogout, onConn
         <button type="button" onClick={searchUsers} className="primary-button" style={{ width: 'auto', marginTop: 0, padding: '12px 18px' }}>SEARCH</button>
       </div>
       {notice && <div className="call-notice" role="status">{notice}</div>}
-      {searchResults.length > 0 && <div className="contacts-list" style={{ marginBottom: '18px' }}><p className="section-label">SEARCH RESULTS <span>{searchResults.length}</span></p>{searchResults.map((user) => <div className="contact-row" key={user.id}><span className={`presence ${user.online_status !== 'offline' ? 'online' : ''}`} /><div><strong>{user.name}</strong><small>ID: {user.id} • {user.online_status !== 'offline' ? 'Online' : 'Offline'}</small></div><div style={{ marginLeft: 'auto', display: 'flex', gap: '8px' }}><button type="button" onClick={() => addContact(user)}>ADD</button><button type="button" onClick={() => callContact(user)}>CALL</button></div></div>)}</div>}
+      {searchResults.length > 0 && <div className="contacts-list" style={{ marginBottom: '18px' }}><p className="section-label">SEARCH RESULTS <span>{searchResults.length}</span></p>{searchResults.map((user) => <div className="contact-row" key={user.id}><span className={`presence ${user.online_status !== 'offline' ? 'online' : ''}`} /><div><strong>{user.name}</strong><small>ID: {user.id} • {user.online_status !== 'offline' ? 'Online' : 'Offline'}</small></div><button type="button" onClick={() => callContact(user)}>CALL</button></div>)}</div>}
       {incoming && <div className="incoming-call"><p className="eyebrow">INCOMING CALL</p><h2>{incoming.caller.name}</h2><p>{incoming.caller.name} is calling you</p><div><button className="reject-button" onClick={() => act(incoming.id, 'reject')}>REJECT</button><button className="accept-button" onClick={() => act(incoming.id, 'accept')}>ACCEPT</button></div></div>}
       {outgoing && <div className="outgoing-call"><p className="eyebrow">OUTGOING CALL</p><h2>Calling {outgoing.receiver.name}...</h2><p>Ringing...</p><button className="cancel-button" onClick={() => act(outgoing.id, 'cancel')}>CANCEL CALL</button></div>}
-      <div className="contacts-list"><p className="section-label">CONTACTS <span>{list.length}</span></p>{list.length ? list.map((contact) => <div className="contact-row" key={contact.id}><span className={`presence ${contact.online_status !== 'offline' ? 'online' : ''}`} /><div><strong>{contact.name}</strong><small>{contact.online_status !== 'offline' ? 'Available' : 'Offline'}</small></div><button disabled={busy || contact.online_status === 'offline' || Boolean(incoming || outgoing)} onClick={() => callContact(contact)}>CALL <span aria-hidden="true">↗</span></button></div>) : <p className="empty-history">No contacts yet. Search a user and add them.</p>}</div>
+      <div className="contacts-list"><p className="section-label">CONTACTS <span>0</span></p><p className="empty-history">Search a registered user to start a call.</p></div>
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', marginTop: '18px' }}>
         <button className="manual-link" onClick={onManualJoin}>JOIN ROOM MANUALLY</button>
         <button className="manual-link" type="button" onClick={onLogout}>LOGOUT</button>
