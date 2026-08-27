@@ -35,6 +35,9 @@ const ENGINE_WS_BASE = resolveEngineWs();
 
 let socket = null;
 let listeners = [];
+let pendingAudioQueue = [];
+let activeTapCleanup = null;
+let tapInstanceCounter = 0;
 
 /**
  * Encodes raw Float32 audio samples into a standard 16-bit mono PCM WAV ArrayBuffer.
@@ -87,17 +90,32 @@ export function connectEngineStream(analysisId, onEventCallback) {
   }
 
   const wsUrl = `${ENGINE_WS_BASE}/analysis/${analysisId}`;
+  console.info(`[S1-WS-CONNECT] call_id=${analysisId} url=${wsUrl}`);
   console.info(`[DEBUG-ENGINE-WS] URL=${wsUrl} call_id=${analysisId}`);
   socket = new WebSocket(wsUrl);
 
   socket.onopen = () => {
-    console.info(`[DEBUG-ENGINE-WS] CONNECTED`);
+    console.info(`[DEBUG-ENGINE-WS] CONNECTED call_id=${analysisId}`);
     console.info(`[ENGINE] websocket=${wsUrl} connected=true`);
+
+    // Flush any pending audio chunks that were queued while socket was opening
+    if (pendingAudioQueue.length > 0) {
+      console.info(`[S1-WS-SEND] Flushing ${pendingAudioQueue.length} queued audio chunks for call_id=${analysisId}`);
+      while (pendingAudioQueue.length > 0) {
+        const queuedBuf = pendingAudioQueue.shift();
+        try {
+          socket.send(queuedBuf);
+        } catch (err) {
+          console.warn('[SYSTEM 1] Failed to flush queued audio buffer', err);
+        }
+      }
+    }
   };
 
   socket.onmessage = (event) => {
     try {
       const data = JSON.parse(event.data);
+      console.info(`[S1-TELEMETRY-RECEIVED] call_id=${analysisId} event=${data.event}`, data);
       console.info(`[DEBUG-ENGINE-WS] MESSAGE RECEIVED`, { event: data.event, payload: data });
       if (data.event === 'RISK_UPDATED') {
         console.info(`[RISK] score=${data.risk_score} level=${data.risk_level} action=${data.recommended_action}`);
@@ -140,6 +158,7 @@ export function onRiskEvent(callback) {
 
 export async function notifyEngineStartCall(callPayload) {
   try {
+    console.info(`[S1-CALL-START] call_id=${callPayload.call_id} caller=${callPayload.caller_id} receiver=${callPayload.receiver_id}`);
     const response = await fetch(`${ENGINE_HTTP_BASE}/analysis/start`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -185,8 +204,21 @@ function downsampleBuffer(buffer, inputSampleRate, outputSampleRate = 16000) {
 /**
  * Starts real-time Web Audio API PCM capture from a live MediaStreamTrack
  * and streams 2.5s WAV chunks directly into System 2 Engine.
+ * Guarantees a single singleton audio tap per call.
  */
 export function startAudioStreamToEngine(analysisId, mediaStreamTrack, options = {}) {
+  // Prevent duplicate concurrent audio taps
+  if (activeTapCleanup) {
+    try {
+      activeTapCleanup();
+    } catch (_) {}
+    activeTapCleanup = null;
+  }
+
+  const tapInstanceId = ++tapInstanceCounter;
+  console.info(`[AUDIO-TAP-INSTANCE] instance_id=${tapInstanceId} call_id=${analysisId}`);
+  console.info(`[S1-AUDIO-TAP-START] call_id=${analysisId} instance_id=${tapInstanceId}`);
+
   const track = mediaStreamTrack?.mediaStreamTrack || (mediaStreamTrack instanceof MediaStreamTrack ? mediaStreamTrack : mediaStreamTrack?.track);
   if (!track || track.readyState === 'ended') {
     console.warn('[SYSTEM 1] Invalid or ended audio track provided for engine streaming', mediaStreamTrack);
@@ -248,15 +280,23 @@ export function startAudioStreamToEngine(analysisId, mediaStreamTrack, options =
         // Encode to WAV binary buffer (16 kHz, 16-bit mono)
         const wavBuffer = encodeWav(chunkSamples, targetSampleRate);
 
-        const speechDetected = rmsEnergy > 0.005;
+        const speechDetected = rmsEnergy > 0.001;
         const wsReadyState = socket ? (socket.readyState === 1 ? 'OPEN' : socket.readyState) : 'NULL';
 
+        console.info(`[S1-AUDIO-CHUNK] call_id=${analysisId} window=${windowIndex} bytes=${wavBuffer.byteLength} sample_rate=16000 rms=${rmsEnergy.toFixed(4)} speech_detected=${speechDetected}`);
         console.info(`[DEBUG-AUDIO-SEND] call_id=${analysisId} websocket_readyState=${wsReadyState} chunk_number=${windowIndex} byte_length=${wavBuffer.byteLength} sample_rate=16000 rms=${rmsEnergy.toFixed(4)}`);
         console.info(`[AUDIO-TAP] call_id=${analysisId} chunk=${windowIndex} sample_rate=16000 channels=1 bytes=${wavBuffer.byteLength} rms=${rmsEnergy.toFixed(4)} speech_detected=${speechDetected}`);
 
         if (socket && socket.readyState === WebSocket.OPEN) {
           socket.send(wavBuffer);
+          console.info(`[S1-WS-SEND] call_id=${analysisId} chunk=${windowIndex} bytes=${wavBuffer.byteLength}`);
           console.info(`[DEBUG-ENGINE-WS] BINARY AUDIO SENT`, { chunk: windowIndex, bytes: wavBuffer.byteLength });
+        } else if (socket && socket.readyState === WebSocket.CONNECTING) {
+          // Queue buffer until WebSocket finishes handshake
+          console.info(`[SYSTEM 1] WebSocket connecting, queueing audio chunk #${windowIndex} for call_id=${analysisId}`);
+          if (pendingAudioQueue.length < 10) {
+            pendingAudioQueue.push(wavBuffer);
+          }
         } else {
           // Fallback HTTP multipart upload
           const blob = new Blob([wavBuffer], { type: 'audio/wav' });
@@ -290,7 +330,7 @@ export function startAudioStreamToEngine(analysisId, mediaStreamTrack, options =
     console.error('[SYSTEM 1] Failed to initialize Web Audio tap for Engine streaming', err);
   }
 
-  return () => {
+  const cleanup = () => {
     isStreaming = false;
     try {
       if (processorNode && sourceNode) {
@@ -304,6 +344,12 @@ export function startAudioStreamToEngine(analysisId, mediaStreamTrack, options =
         audioContext.close();
       }
     } catch (_) {}
+    if (activeTapCleanup === cleanup) {
+      activeTapCleanup = null;
+    }
     console.info('[SYSTEM 1] Real audio streaming tap stopped for analysis:', analysisId);
   };
+
+  activeTapCleanup = cleanup;
+  return cleanup;
 }

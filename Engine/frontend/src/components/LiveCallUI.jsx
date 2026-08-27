@@ -88,6 +88,102 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId }) {
   const processorRef = useRef(null);
   const wsRef = useRef(null);
   const timerRef = useRef(null);
+  const currentSubscribedCallIdRef = useRef(null);
+
+  // Connect to System 2 WebSocket for the current analysis session
+  const connectWebSocket = useCallback((targetId) => {
+    if (!targetId) return;
+    if (wsRef.current) {
+      try { wsRef.current.close(); } catch (_) {}
+      wsRef.current = null;
+    }
+
+    const wsBase = resolveWsBase();
+    const wsUrl = `${wsBase}/analysis/${targetId}`;
+    console.info(`[SYSTEM 2] Connecting to WebSocket: ${wsUrl} for call_id=${targetId}`);
+    setAudioStreamState('CONNECTING');
+
+    const socket = new WebSocket(wsUrl);
+    wsRef.current = socket;
+
+    socket.onopen = () => {
+      console.info(`[SYSTEM 2] WebSocket connected for session ${targetId}`);
+      setAudioStreamState('AUDIO RECEIVING');
+    };
+
+    socket.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        console.info(`[UI-EVENT] call_id=${targetId} event=${data.event}`, data);
+        if (data.event === 'ANALYSIS_STARTED') {
+          setAudioStreamState('AUDIO RECEIVING');
+        } else if (data.event === 'AUDIO_PROCESSED') {
+          setAudioStreamState('ANALYZING AUDIO');
+          setRiskData((prev) => ({
+            ...prev,
+            audioQuality: data.audio_quality_score,
+            windowsAnalyzed: data.window_index || prev.windowsAnalyzed + 1,
+            lastLatencyMs: data.processing_latency_ms,
+          }));
+        } else if (data.event === 'RISK_UPDATED') {
+          setAudioStreamState('ANALYSIS READY');
+          const authScore = data.synthetic_probability != null ? Math.max(0, 100 - data.synthetic_probability) : null;
+          setRiskData((prev) => ({
+            ...prev,
+            riskScore: data.risk_score,
+            riskLevel: data.risk_level,
+            overallConfidence: data.overall_confidence,
+            syntheticProbability: data.synthetic_probability,
+            voiceAuthenticity: authScore,
+            speakerSimilarity: data.speaker_similarity,
+            contextScore: data.context_score,
+            reasons: data.reasons || [],
+            recommendedAction: data.recommended_action || prev.recommendedAction,
+            lastLatencyMs: data.processing_latency_ms,
+          }));
+
+          // Add to real evidence log
+          setEvidenceLog((prev) => [
+            {
+              timestamp: new Date().toLocaleTimeString(),
+              callId: targetId,
+              windowIndex: data.window_index || prev.length + 1,
+              syntheticProbability: data.synthetic_probability,
+              modelConfidence: data.overall_confidence,
+              riskScore: data.risk_score,
+              riskLevel: data.risk_level,
+              recommendedAction: data.recommended_action,
+            },
+            ...prev.slice(0, 19),
+          ]);
+
+          if (data.risk_level === 'HIGH') {
+            setShowAlertModal(true);
+          }
+        } else if (data.event === 'POLICY_UPDATED') {
+          setRiskData((prev) => ({
+            ...prev,
+            recommendedAction: data.recommended_action,
+            verificationRequired: data.verification_required,
+          }));
+        }
+      } catch (e) {
+        console.error('[SYSTEM 2] Failed to parse WebSocket message', e);
+      }
+    };
+
+    socket.onerror = (err) => {
+      console.warn('[SYSTEM 2] WebSocket connection error', err);
+      setAudioStreamState('ERROR');
+    };
+
+    socket.onclose = (ev) => {
+      console.info(`[SYSTEM 2] WebSocket closed (code=${ev.code}) for session ${targetId}`);
+      if (wsRef.current === socket) {
+        setAudioStreamState('RECONNECTING');
+      }
+    };
+  }, []);
 
   // Auto-subscribe to initialCallId or active call from backend
   useEffect(() => {
@@ -101,28 +197,52 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId }) {
         setAvailableCalls(calls);
 
         if (initialCallId) {
-          const match = calls.find((c) => c.call_id === initialCallId);
-          if (match) {
+          if (currentSubscribedCallIdRef.current !== initialCallId) {
+            currentSubscribedCallIdRef.current = initialCallId;
+            const match = calls.find((c) => c.call_id === initialCallId);
+            if (match) {
+              setCallState((prev) => ({
+                ...prev,
+                callId: match.call_id,
+                callerId: match.caller_id,
+                receiverId: match.receiver_id,
+                status: 'ANALYZING',
+              }));
+            }
+            connectWebSocket(initialCallId);
+          }
+        } else if (calls.length > 0) {
+          const activeCall = calls.find((c) => c.status === 'ACTIVE' || c.status === 'PROCESSING') || calls[0];
+          if (activeCall && activeCall.call_id !== currentSubscribedCallIdRef.current) {
+            currentSubscribedCallIdRef.current = activeCall.call_id;
             setCallState((prev) => ({
               ...prev,
-              callId: match.call_id,
-              callerId: match.caller_id,
-              receiverId: match.receiver_id,
+              callId: activeCall.call_id,
+              callerId: activeCall.caller_id,
+              receiverId: activeCall.receiver_id,
               status: 'ANALYZING',
             }));
+            setAnalysisId(activeCall.call_id);
+            setRiskData({
+              riskScore: null,
+              riskLevel: null,
+              overallConfidence: null,
+              syntheticProbability: null,
+              voiceAuthenticity: null,
+              speakerSimilarity: null,
+              audioQuality: null,
+              contextScore: null,
+              transactionScore: null,
+              behaviorScore: null,
+              reasons: [],
+              recommendedAction: null,
+              verificationRequired: false,
+              windowsAnalyzed: 0,
+              lastLatencyMs: null,
+            });
+            setEvidenceLog([]);
+            connectWebSocket(activeCall.call_id);
           }
-          connectWebSocket(initialCallId);
-        } else if (calls.length > 0 && !analysisId) {
-          const latest = calls[0];
-          setCallState((prev) => ({
-            ...prev,
-            callId: latest.call_id,
-            callerId: latest.caller_id,
-            receiverId: latest.receiver_id,
-            status: 'ANALYZING',
-          }));
-          setAnalysisId(latest.call_id);
-          connectWebSocket(latest.call_id);
         }
       } catch (e) {
         console.warn('[SYSTEM 2] Failed to sync active calls', e);
@@ -130,7 +250,7 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId }) {
     }
 
     syncActiveCalls();
-    const interval = setInterval(syncActiveCalls, 5000);
+    const interval = setInterval(syncActiveCalls, 3000);
 
     return () => {
       active = false;
@@ -139,7 +259,7 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId }) {
         try { wsRef.current.close(); } catch (_) {}
       }
     };
-  }, [initialCallId]);
+  }, [initialCallId, connectWebSocket]);
 
   // Live call timer
   useEffect(() => {
@@ -189,92 +309,6 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId }) {
     renderWave();
     return () => cancelAnimationFrame(animationFrameId);
   }, [isMicActive, rmsVolume]);
-
-  // Connect to System 2 WebSocket for the current analysis session
-  const connectWebSocket = (targetId) => {
-    if (wsRef.current) {
-      try { wsRef.current.close(); } catch (_) {}
-      wsRef.current = null;
-    }
-
-    const wsBase = resolveWsBase();
-    const wsUrl = `${wsBase}/analysis/${targetId}`;
-    console.info(`[SYSTEM 2] Connecting to WebSocket: ${wsUrl}`);
-
-    const socket = new WebSocket(wsUrl);
-    wsRef.current = socket;
-
-    socket.onopen = () => {
-      console.info(`[SYSTEM 2] WebSocket connected for session ${targetId}`);
-      setAudioStreamState('AUDIO RECEIVING');
-    };
-
-    socket.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        if (data.event === 'AUDIO_PROCESSED') {
-          setAudioStreamState('ANALYZING AUDIO');
-          setRiskData((prev) => ({
-            ...prev,
-            audioQuality: data.audio_quality_score,
-            windowsAnalyzed: data.window_index || prev.windowsAnalyzed + 1,
-            lastLatencyMs: data.processing_latency_ms,
-          }));
-        } else if (data.event === 'RISK_UPDATED') {
-          const authScore = data.synthetic_probability != null ? Math.max(0, 100 - data.synthetic_probability) : null;
-          setRiskData((prev) => ({
-            ...prev,
-            riskScore: data.risk_score,
-            riskLevel: data.risk_level,
-            overallConfidence: data.overall_confidence,
-            syntheticProbability: data.synthetic_probability,
-            voiceAuthenticity: authScore,
-            speakerSimilarity: data.speaker_similarity,
-            contextScore: data.context_score,
-            reasons: data.reasons || [],
-            recommendedAction: data.recommended_action || prev.recommendedAction,
-            lastLatencyMs: data.processing_latency_ms,
-          }));
-
-          // Add to real evidence log
-          setEvidenceLog((prev) => [
-            {
-              timestamp: new Date().toLocaleTimeString(),
-              callId: targetId,
-              windowIndex: data.window_index || prev.length + 1,
-              syntheticProbability: data.synthetic_probability,
-              modelConfidence: data.overall_confidence,
-              riskScore: data.risk_score,
-              riskLevel: data.risk_level,
-              recommendedAction: data.recommended_action,
-            },
-            ...prev.slice(0, 19),
-          ]);
-
-          if (data.risk_level === 'HIGH') {
-            setShowAlertModal(true);
-          }
-        } else if (data.event === 'POLICY_UPDATED') {
-          setRiskData((prev) => ({
-            ...prev,
-            recommendedAction: data.recommended_action,
-            verificationRequired: data.verification_required,
-          }));
-        }
-      } catch (e) {
-        console.error('[SYSTEM 2] Failed to parse WebSocket message', e);
-      }
-    };
-
-    socket.onerror = (err) => {
-      console.warn('[SYSTEM 2] WebSocket connection error', err);
-      setAudioStreamState('ENGINE OFFLINE');
-    };
-
-    socket.onclose = () => {
-      console.info('[SYSTEM 2] WebSocket closed');
-    };
-  };
 
   // Start Live Audio Tap & Session
   const handleStartAnalysis = async () => {

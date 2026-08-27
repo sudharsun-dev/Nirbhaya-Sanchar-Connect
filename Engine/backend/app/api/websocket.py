@@ -63,6 +63,7 @@ async def websocket_analysis_endpoint(websocket: WebSocket, analysis_id: str):
     Processes real audio in memory buffers without persisting raw audio.
     """
     await manager.connect(analysis_id, websocket)
+    print(f"[S2-WS-CONNECT] call_id={analysis_id} timestamp={time.time()}")
     
     # Broadcast ANALYSIS_STARTED
     await manager.broadcast_event(analysis_id, {
@@ -83,98 +84,110 @@ async def websocket_analysis_endpoint(websocket: WebSocket, analysis_id: str):
                 audio_bytes = message["bytes"]
                 window_index += 1
                 
+                print(f"[S2-AUDIO-RECEIVED] call_id={analysis_id} window={window_index} bytes={len(audio_bytes)} timestamp={start_pipeline_time}")
                 print(f"[AUDIO-RECEIVED] call_id={analysis_id} bytes={len(audio_bytes)} timestamp={start_pipeline_time}")
 
-                # 1. Process pipeline (in-memory)
-                processed_audio = preprocessor.process_audio_bytes(audio_bytes)
-                samples_count = processed_audio['tensor'].shape[-1] if 'tensor' in processed_audio and hasattr(processed_audio['tensor'], 'shape') else len(audio_bytes) // 2
-                print(f"[AUDIO-DECODE] call_id={analysis_id} sample_rate={processed_audio['sample_rate']} channels={processed_audio['channels']} samples={samples_count} duration={processed_audio['duration_ms']} rms={processed_audio['rms_energy']}")
-                print(f"[VAD] call_id={analysis_id} rms={processed_audio['rms_energy']} speech_detected={processed_audio['speech_detected']}")
+                try:
+                    # 1. Process pipeline (in-memory)
+                    processed_audio = preprocessor.process_audio_bytes(audio_bytes)
+                    samples_count = processed_audio['tensor'].shape[-1] if 'tensor' in processed_audio and hasattr(processed_audio['tensor'], 'shape') else len(audio_bytes) // 2
+                    print(f"[S2-AUDIO-DECODE] call_id={analysis_id} window={window_index} sample_rate={processed_audio['sample_rate']} channels={processed_audio['channels']} samples={samples_count} duration={processed_audio['duration_ms']} rms={processed_audio['rms_energy']}")
+                    print(f"[AUDIO-DECODE] call_id={analysis_id} sample_rate={processed_audio['sample_rate']} channels={processed_audio['channels']} samples={samples_count} duration={processed_audio['duration_ms']} rms={processed_audio['rms_energy']}")
+                    print(f"[S2-VAD] call_id={analysis_id} window={window_index} rms={processed_audio['rms_energy']} speech_detected={processed_audio['speech_detected']}")
+                    print(f"[VAD] call_id={analysis_id} rms={processed_audio['rms_energy']} speech_detected={processed_audio['speech_detected']}")
 
-                print(f"[AASIST-START] call_id={analysis_id} samples={samples_count}")
-                voice_res = voice_authenticity_engine.analyze_audio(processed_audio)
-                print(f"[AASIST-RESULT] call_id={analysis_id} spoof_logit={voice_res.get('spoof_logit')} bonafide_logit={voice_res.get('bonafide_logit')} synthetic_probability={voice_res.get('synthetic_probability')} authenticity_probability={voice_res.get('authenticity_score')} confidence={voice_res.get('confidence')}")
+                    print(f"[S2-AASIST-START] call_id={analysis_id} window={window_index} samples={samples_count}")
+                    print(f"[AASIST-START] call_id={analysis_id} samples={samples_count}")
+                    voice_res = voice_authenticity_engine.analyze_audio(processed_audio)
+                    print(f"[S2-AASIST-RESULT] call_id={analysis_id} window={window_index} status={voice_res.get('status')} synthetic_probability={voice_res.get('synthetic_probability')} authenticity_score={voice_res.get('authenticity_score')} confidence={voice_res.get('confidence')}")
+                    print(f"[AASIST-RESULT] call_id={analysis_id} spoof_logit={voice_res.get('spoof_logit')} bonafide_logit={voice_res.get('bonafide_logit')} synthetic_probability={voice_res.get('synthetic_probability')} authenticity_probability={voice_res.get('authenticity_score')} confidence={voice_res.get('confidence')}")
 
-                speaker_res = speaker_verifier.compare_speaker(processed_audio)
-                asr_res = await asr_engine.transcribe(audio_bytes)
-                context_res = context_engine.analyze_text(asr_res.get("text", ""))
-                behavior_res = behavior_engine.analyze_behavior(processed_audio, text_transcript=asr_res.get("text", ""))
+                    speaker_res = speaker_verifier.compare_speaker(processed_audio)
+                    asr_res = await asr_engine.transcribe(audio_bytes)
+                    context_res = context_engine.analyze_text(asr_res.get("text", ""))
+                    behavior_res = behavior_engine.analyze_behavior(processed_audio, text_transcript=asr_res.get("text", ""))
 
-                # 2. Calculate Deterministic Risk & Policy
-                risk_output = risk_engine.compute_risk(
-                    voice_result=voice_res,
-                    speaker_result=speaker_res,
-                    context_result=context_res,
-                    transaction_result=None,
-                    behavior_result=behavior_res
-                )
+                    # 2. Calculate Deterministic Risk & Policy
+                    risk_output = risk_engine.compute_risk(
+                        voice_result=voice_res,
+                        speaker_result=speaker_res,
+                        context_result=context_res,
+                        transaction_result=None,
+                        behavior_result=behavior_res
+                    )
 
-                policy_output = policy_engine.evaluate(risk_output=risk_output, profile_name="BANK")
-                pipeline_latency_ms = round((time.time() - start_pipeline_time) * 1000, 2)
+                    policy_output = policy_engine.evaluate(risk_output=risk_output, profile_name="BANK")
+                    pipeline_latency_ms = round((time.time() - start_pipeline_time) * 1000, 2)
 
-                print(f"[RISK-ENGINE] call_id={analysis_id} synthetic_probability={risk_output.get('synthetic_probability')} speaker_score={risk_output.get('speaker_similarity')} context_score={risk_output.get('context_score')} behavior_score={risk_output.get('behavior_score')} risk_score={risk_output.get('risk_score')} risk_level={risk_output.get('risk_level')} action={policy_output.get('recommended_action')}")
+                    print(f"[S2-RISK-RESULT] call_id={analysis_id} window={window_index} risk_score={risk_output.get('risk_score')} risk_level={risk_output.get('risk_level')} action={policy_output.get('recommended_action')} synthetic_probability={risk_output.get('synthetic_probability')}")
+                    print(f"[RISK-ENGINE] call_id={analysis_id} synthetic_probability={risk_output.get('synthetic_probability')} speaker_score={risk_output.get('speaker_similarity')} context_score={risk_output.get('context_score')} behavior_score={risk_output.get('behavior_score')} risk_score={risk_output.get('risk_score')} risk_level={risk_output.get('risk_level')} action={policy_output.get('recommended_action')}")
 
-                # 3. Broadcast AUDIO_PROCESSED
-                await manager.broadcast_event(analysis_id, {
-                    "event": "AUDIO_PROCESSED",
-                    "analysis_id": analysis_id,
-                    "window_index": window_index,
-                    "duration_ms": processed_audio["duration_ms"],
-                    "speech_detected": processed_audio["speech_detected"],
-                    "audio_quality_score": processed_audio["audio_quality_score"],
-                    "processing_latency_ms": pipeline_latency_ms
-                })
-
-                # 4. Broadcast RISK_UPDATED
-                risk_event_payload = {
-                    "event": "RISK_UPDATED",
-                    "analysis_id": analysis_id,
-                    "window_index": window_index,
-                    "risk_score": risk_output["risk_score"],
-                    "risk_level": risk_output["risk_level"],
-                    "overall_confidence": risk_output["overall_confidence"],
-                    "synthetic_probability": risk_output["synthetic_probability"],
-                    "speaker_similarity": risk_output["speaker_similarity"],
-                    "context_score": risk_output["context_score"],
-                    "reasons": risk_output["reasons"],
-                    "recommended_action": policy_output["recommended_action"],
-                    "processing_latency_ms": pipeline_latency_ms
-                }
-                print(f"[TELEMETRY-SEND] call_id={analysis_id} event=RISK_UPDATED risk_score={risk_output['risk_score']} risk_level={risk_output['risk_level']} synthetic_probability={risk_output['synthetic_probability']} confidence={risk_output['overall_confidence']}")
-                await manager.broadcast_event(analysis_id, risk_event_payload)
-
-                # 5. Broadcast POLICY_UPDATED
-                await manager.broadcast_event(analysis_id, {
-                    "event": "POLICY_UPDATED",
-                    "analysis_id": analysis_id,
-                    "recommended_action": policy_output["recommended_action"],
-                    "verification_required": policy_output["verification_required"],
-                    "reasons": policy_output["reasons"]
-                })
-
-                # 6. Broadcast ALERT_CREATED if HIGH risk
-                if risk_output["risk_level"] == "HIGH":
-                    sec_msg = bank_policy_adapter.format_system1_message(risk_output, policy_output)
+                    # 3. Broadcast AUDIO_PROCESSED
                     await manager.broadcast_event(analysis_id, {
-                        "event": "ALERT_CREATED",
+                        "event": "AUDIO_PROCESSED",
                         "analysis_id": analysis_id,
-                        "alert_level": "HIGH",
-                        "security_message": sec_msg,
-                        "recommended_action": "HOLD & INDEPENDENTLY VERIFY"
+                        "window_index": window_index,
+                        "duration_ms": processed_audio["duration_ms"],
+                        "speech_detected": processed_audio["speech_detected"],
+                        "audio_quality_score": processed_audio["audio_quality_score"],
+                        "processing_latency_ms": pipeline_latency_ms
                     })
 
-                # 7. Asynchronously Trigger System 1 Server Callback
-                try:
-                    await callback_service.send_callback(
-                        event="RISK_UPDATED",
-                        call_id=analysis_id,
-                        analysis_id=analysis_id,
-                        risk_output=risk_output,
-                        policy_output=policy_output,
-                        verification_required=policy_output["verification_required"]
-                    )
-                except Exception as cb_err:
-                    logger.warn(f"[CALLBACK ERROR] Failed callback to System 1: {cb_err}")
+                    # 4. Broadcast RISK_UPDATED
+                    risk_event_payload = {
+                        "event": "RISK_UPDATED",
+                        "analysis_id": analysis_id,
+                        "window_index": window_index,
+                        "risk_score": risk_output["risk_score"],
+                        "risk_level": risk_output["risk_level"],
+                        "overall_confidence": risk_output["overall_confidence"],
+                        "synthetic_probability": risk_output["synthetic_probability"],
+                        "speaker_similarity": risk_output["speaker_similarity"],
+                        "context_score": risk_output["context_score"],
+                        "reasons": risk_output["reasons"],
+                        "recommended_action": policy_output["recommended_action"],
+                        "processing_latency_ms": pipeline_latency_ms
+                    }
+                    print(f"[S2-TELEMETRY-BROADCAST] call_id={analysis_id} window={window_index} synthetic_probability={risk_output['synthetic_probability']} risk_score={risk_output['risk_score']} risk_level={risk_output['risk_level']} action={policy_output['recommended_action']}")
+                    print(f"[TELEMETRY-SEND] call_id={analysis_id} event=RISK_UPDATED risk_score={risk_output['risk_score']} risk_level={risk_output['risk_level']} synthetic_probability={risk_output['synthetic_probability']} confidence={risk_output['overall_confidence']}")
+                    await manager.broadcast_event(analysis_id, risk_event_payload)
+
+                    # 5. Broadcast POLICY_UPDATED
+                    await manager.broadcast_event(analysis_id, {
+                        "event": "POLICY_UPDATED",
+                        "analysis_id": analysis_id,
+                        "recommended_action": policy_output["recommended_action"],
+                        "verification_required": policy_output["verification_required"],
+                        "reasons": policy_output["reasons"]
+                    })
+
+                    # 6. Broadcast ALERT_CREATED if HIGH risk
+                    if risk_output["risk_level"] == "HIGH":
+                        sec_msg = bank_policy_adapter.format_system1_message(risk_output, policy_output)
+                        await manager.broadcast_event(analysis_id, {
+                            "event": "ALERT_CREATED",
+                            "analysis_id": analysis_id,
+                            "alert_level": "HIGH",
+                            "security_message": sec_msg,
+                            "recommended_action": "HOLD & INDEPENDENTLY VERIFY"
+                        })
+
+                    # 7. Asynchronously Trigger System 1 Server Callback
+                    try:
+                        await callback_service.send_callback(
+                            event="RISK_UPDATED",
+                            call_id=analysis_id,
+                            analysis_id=analysis_id,
+                            risk_output=risk_output,
+                            policy_output=policy_output,
+                            verification_required=policy_output["verification_required"]
+                        )
+                    except Exception as cb_err:
+                        logger.warn(f"[CALLBACK ERROR] Failed callback to System 1: {cb_err}")
+
+                except Exception as pipe_err:
+                    print(f"[AASIST-ERROR] call_id={analysis_id} window={window_index} error={pipe_err}")
+                    logger.exception(f"[PIPELINE ERROR] Audio analysis failed for window {window_index}: {pipe_err}")
 
                 # 8. Persist Telemetry Metadata to DB (No raw audio stored)
                 try:
