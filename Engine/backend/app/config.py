@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     REDIS_URL: Optional[str] = None
 
     # CORS Allowed Origins
-    CORS_ORIGINS: str = "http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174"
+    CORS_ORIGINS: str = "https://nirbhaya-sanchar-connect-vv3g.vercel.app,http://localhost:5173,http://localhost:5174,http://127.0.0.1:5173,http://127.0.0.1:5174,*"
 
     @property
     def cors_origins_list(self) -> List[str]:
@@ -23,9 +23,9 @@ class Settings(BaseSettings):
         return [origin.strip() for origin in self.CORS_ORIGINS.split(",") if origin.strip()]
 
     # System 1 Integration
-    SYSTEM1_BASE_URL: str = "http://localhost:3001"
+    SYSTEM1_BASE_URL: str = "https://nirbhaya-connect-server.onrender.com"
     SYSTEM1_API_KEY: Optional[str] = "nirbhaya_system1_api_key_2026"
-    SYSTEM1_CALLBACK_URL: str = "http://localhost:3001/api/nirbhaya/callback"
+    SYSTEM1_CALLBACK_URL: str = "https://nirbhaya-connect-server.onrender.com/api/nirbhaya/callback"
     SYSTEM1_CALLBACK_SECRET: Optional[str] = "nirbhaya_system1_api_key_2026"
 
     # AI Models Metadata & Settings

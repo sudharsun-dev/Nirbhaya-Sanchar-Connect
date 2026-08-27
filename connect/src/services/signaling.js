@@ -2,7 +2,7 @@ import { authenticatedRequest, getSessionUser } from './auth'
 
 const apiBase = import.meta.env.VITE_API_BASE_URL 
   ? import.meta.env.VITE_API_BASE_URL.replace(/\/$/, '') 
-  : (import.meta.env.DEV ? 'http://localhost:3001' : '')
+  : (import.meta.env.DEV ? 'http://localhost:3001' : 'https://nirbhaya-connect-server.onrender.com')
 
 async function request(path, options = {}) {
   let response
