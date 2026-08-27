@@ -13,12 +13,33 @@ function normalizeContactUser(user) {
   }
 }
 
+function databaseError(response, operation, error) {
+  console.error(operation, {
+    code: error?.code ?? null,
+    message: error?.message ?? null,
+    details: error?.details ?? null,
+    hint: error?.hint ?? null,
+  })
+  return response.status(500).json({
+    error: `${operation} failed.`,
+    code: error?.code ?? null,
+    message: error?.message ?? null,
+    details: error?.details ?? null,
+    hint: error?.hint ?? null,
+  })
+}
+
 export default async function handler(request, response) {
   if (request.method !== 'GET' && request.method !== 'POST') return response.status(405).json({ error: 'Method not allowed.' })
 
   try {
     const supabase = getSupabaseAdmin()
-    const auth = await getAuthenticatedUser(supabase, request)
+    let auth
+    try {
+      auth = await getAuthenticatedUser(supabase, request)
+    } catch (error) {
+      return databaseError(response, 'CONTACTS_AUTH', error)
+    }
     console.info(`AUTH_HEADER_PRESENT=${auth.diagnostics.headerPresent}`)
     console.info(`AUTH_TOKEN_PRESENT=${auth.diagnostics.tokenPresent}`)
     console.info(`SESSION_FOUND=${auth.diagnostics.sessionFound}`)
@@ -34,12 +55,7 @@ export default async function handler(request, response) {
         .or(`user_id.eq.${currentUserId},contact_user_id.eq.${currentUserId}`)
 
       if (error) {
-        console.error('CONTACTS_DATABASE_ERROR', {
-          operation: 'list_contacts',
-          code: error.code,
-          message: error.message,
-        })
-        return response.status(500).json({ error: 'Authentication service temporarily unavailable.' })
+        return databaseError(response, 'CONTACTS_SELECT', error)
       }
 
       const relatedIds = (edges || []).map((edge) => edge.user_id === currentUserId ? edge.contact_user_id : edge.user_id)
@@ -52,12 +68,7 @@ export default async function handler(request, response) {
         : { data: [] }
 
       if (users.error) {
-        console.error('CONTACTS_DATABASE_ERROR', {
-          operation: 'fetch_contact_users',
-          code: users.error.code,
-          message: users.error.message,
-        })
-        return response.status(500).json({ error: 'Authentication service temporarily unavailable.' })
+        return databaseError(response, 'CONTACTS_USER_LOOKUP', users.error)
       }
 
       return response.status(200).json({ contacts: (users.data || []).map(normalizeContactUser).filter(Boolean) })
@@ -77,12 +88,7 @@ export default async function handler(request, response) {
       .maybeSingle()
 
     if (existingError) {
-      console.error('CONTACTS_DATABASE_ERROR', {
-        operation: 'check_existing_contact',
-        code: existingError.code,
-        message: existingError.message,
-      })
-      return response.status(500).json({ error: 'Authentication service temporarily unavailable.' })
+      return databaseError(response, 'CONTACTS_EXISTING_LOOKUP', existingError)
     }
 
     if (existingEdge) {
@@ -95,7 +101,8 @@ export default async function handler(request, response) {
       .eq('id', contactId)
       .maybeSingle()
 
-    if (contactLookupError || !contact) {
+    if (contactLookupError) return databaseError(response, 'CONTACTS_TARGET_USER', contactLookupError)
+    if (!contact) {
       return response.status(404).json({ error: 'User or contact not found.' })
     }
 
@@ -108,21 +115,13 @@ export default async function handler(request, response) {
       })
 
     if (insertError) {
-      console.error('CONTACTS_DATABASE_ERROR', {
-        operation: 'create_contact',
-        code: insertError.code,
-        message: insertError.message,
-      })
-      return response.status(500).json({ error: 'Authentication service temporarily unavailable.' })
+      return databaseError(response, 'CONTACTS_INSERT', insertError)
     }
 
     return response.status(201).json({ contact: normalizeContactUser(contact) })
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown contact error'
-    console.error('CONTACTS_DATABASE_ERROR', {
-      operation: 'contact_flow',
-      message,
-    })
-    return response.status(500).json({ error: 'Authentication service temporarily unavailable.' })
+    console.error('CONTACTS_ERROR', { message })
+    return response.status(500).json({ error: 'Contact operation failed.', message })
   }
 }
