@@ -184,11 +184,32 @@ async def process_audio_chunk(
     Processes an incoming audio window/chunk (2-5 sec stream window or file upload).
     Executes Preprocessing -> REAL Voice Model -> Speaker Verifier -> ASR -> Context -> Transaction -> Risk Engine -> Policy Engine.
     """
-    # Fetch analysis session
-    session_res = await db.execute(select(AnalysisSession).where(AnalysisSession.id == analysis_id))
+    # Fetch or auto-create analysis session
+    session_res = await db.execute(select(AnalysisSession).where(
+        (AnalysisSession.id == analysis_id) | (AnalysisSession.call_id == analysis_id)
+    ))
     analysis_session = session_res.scalars().first()
     if not analysis_session:
-        raise HTTPException(status_code=404, detail="Analysis session not found.")
+        call_res = await db.execute(select(Call).where(Call.id == analysis_id))
+        call_obj = call_res.scalars().first()
+        if not call_obj:
+            call_obj = Call(
+                id=analysis_id,
+                caller_id="officer@sanchar.gov.in",
+                receiver_id="analyst@sanchar.gov.in",
+                channel="VOIP",
+                status="ACTIVE"
+            )
+            db.add(call_obj)
+            await db.flush()
+        
+        analysis_session = AnalysisSession(
+            id=analysis_id,
+            call_id=analysis_id,
+            status="ACTIVE"
+        )
+        db.add(analysis_session)
+        await db.commit()
 
     audio_bytes = await file.read()
     if not audio_bytes:
@@ -316,8 +337,34 @@ async def process_audio_chunk(
         recommended_action=policy_output["recommended_action"],
         details={"window_index": window_index, "duration_ms": processed_audio["duration_ms"]}
     )
-    db.add(audit)
-    await db.commit()
+    # Broadcast to live WebSocket clients
+    try:
+        from app.api.websocket import manager
+        await manager.broadcast_event(analysis_id, {
+            "event": "AUDIO_PROCESSED",
+            "analysis_id": analysis_id,
+            "window_index": window_index,
+            "duration_ms": processed_audio["duration_ms"],
+            "speech_detected": processed_audio["speech_detected"],
+            "audio_quality_score": processed_audio["audio_quality_score"],
+            "processing_latency_ms": 0.0
+        })
+        await manager.broadcast_event(analysis_id, {
+            "event": "RISK_UPDATED",
+            "analysis_id": analysis_id,
+            "window_index": window_index,
+            "risk_score": risk_output["risk_score"],
+            "risk_level": risk_output["risk_level"],
+            "overall_confidence": risk_output["overall_confidence"],
+            "synthetic_probability": risk_output["synthetic_probability"],
+            "speaker_similarity": risk_output["speaker_similarity"],
+            "context_score": risk_output["context_score"],
+            "reasons": risk_output["reasons"],
+            "recommended_action": policy_output["recommended_action"],
+            "processing_latency_ms": 0.0
+        })
+    except Exception:
+        pass
 
     # Trigger System 1 Callback in background
     await callback_service.send_callback(
