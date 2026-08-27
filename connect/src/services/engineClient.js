@@ -4,7 +4,10 @@ const defaultHttp = import.meta.env.DEV ? 'http://localhost:8000/api/v1' : 'http
 const defaultWs = import.meta.env.DEV ? 'ws://localhost:8000/ws' : 'wss://nirbhaya-sanchar-connect.onrender.com/ws';
 
 function resolveEngineHttp() {
-  const raw = (import.meta.env.VITE_ENGINE_HTTP_URL || defaultHttp).replace(/\/$/, '');
+  const raw = (import.meta.env.VITE_ENGINE_HTTP_URL || '').replace(/\/$/, '');
+  if (!raw || raw.includes('nirbhaya-connect-server') || raw.includes(':3001')) {
+    return defaultHttp;
+  }
   if (!raw.endsWith('/api/v1')) {
     return `${raw}/api/v1`;
   }
@@ -12,12 +15,13 @@ function resolveEngineHttp() {
 }
 
 function resolveEngineWs() {
-  if (import.meta.env.VITE_ENGINE_WS_URL) {
-    let ws = import.meta.env.VITE_ENGINE_WS_URL.replace(/\/$/, '');
+  const rawWs = (import.meta.env.VITE_ENGINE_WS_URL || '').replace(/\/$/, '');
+  if (rawWs && !rawWs.includes('nirbhaya-connect-server') && !rawWs.includes(':3001')) {
+    let ws = rawWs;
     if (!ws.endsWith('/ws')) ws = `${ws}/ws`;
     return ws;
   }
-  const httpUrl = (import.meta.env.VITE_ENGINE_HTTP_URL || defaultHttp).replace(/\/$/, '');
+  const httpUrl = resolveEngineHttp();
   let wsUrl = httpUrl.replace(/^http:/i, 'ws:').replace(/^https:/i, 'wss:');
   wsUrl = wsUrl.replace(/\/api\/v1\/?$/i, '');
   if (!wsUrl.endsWith('/ws')) {

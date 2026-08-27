@@ -1,8 +1,8 @@
 // System 2 API Client
 
 function resolveApiBase() {
-  const configured = import.meta.env.VITE_API_BASE_URL ? import.meta.env.VITE_API_BASE_URL.replace(/\/$/, '') : '';
-  if (!configured) {
+  const configured = (import.meta.env.VITE_ENGINE_HTTP_URL || import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
+  if (!configured || configured.includes('nirbhaya-connect-server') || configured.includes(':3001')) {
     return import.meta.env.DEV ? 'http://localhost:8000/api/v1' : 'https://nirbhaya-sanchar-connect.onrender.com/api/v1';
   }
   return configured.endsWith('/api/v1') ? configured : `${configured}/api/v1`;
@@ -10,7 +10,7 @@ function resolveApiBase() {
 
 export function resolveWsBase() {
   const configuredWs = import.meta.env.VITE_WS_BASE_URL || import.meta.env.VITE_ENGINE_WS_URL;
-  if (configuredWs) {
+  if (configuredWs && !configuredWs.includes('nirbhaya-connect-server') && !configuredWs.includes(':3001')) {
     let ws = configuredWs.replace(/\/$/, '');
     if (!ws.endsWith('/ws')) ws = `${ws}/ws`;
     return ws;
