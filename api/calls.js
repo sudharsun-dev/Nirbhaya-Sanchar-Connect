@@ -1,14 +1,29 @@
 import { getAuthenticatedUser } from './lib/auth.js'
 import { getSupabaseAdmin } from './lib/supabase.js'
 
+function databaseError(response, operation, error) {
+  console.error(operation, {
+    code: error?.code ?? null,
+    message: error?.message ?? null,
+    details: error?.details ?? null,
+    hint: error?.hint ?? null,
+  })
+  return response.status(500).json({
+    error: `${operation} failed.`,
+    code: error?.code ?? null,
+    message: error?.message ?? null,
+    details: error?.details ?? null,
+    hint: error?.hint ?? null,
+  })
+}
+
 async function getUserMap(supabase, userIds) {
   if (!userIds.length) return {}
   const { data: users, error } = await supabase
     .from('users')
     .select('id, name, phone, email')
     .in('id', userIds)
-  if (error) throw error
-  return Object.fromEntries((users || []).map((user) => [user.id, user]))
+  return { users, error }
 }
 
 function normalizeCallRow(call, userMap) {
@@ -32,7 +47,12 @@ export default async function handler(request, response) {
 
   try {
     const supabase = getSupabaseAdmin()
-    const auth = await getAuthenticatedUser(supabase, request)
+    let auth
+    try {
+      auth = await getAuthenticatedUser(supabase, request)
+    } catch (error) {
+      return databaseError(response, 'CALLS_AUTH', error)
+    }
     console.info(`AUTH_HEADER_PRESENT=${auth.diagnostics.headerPresent}`)
     console.info(`AUTH_TOKEN_PRESENT=${auth.diagnostics.tokenPresent}`)
     console.info(`SESSION_FOUND=${auth.diagnostics.sessionFound}`)
@@ -49,16 +69,13 @@ export default async function handler(request, response) {
         .order('updated_at', { ascending: false })
 
       if (error) {
-        console.error('CALLS_DATABASE_ERROR', {
-          operation: 'list_calls',
-          code: error.code,
-          message: error.message,
-        })
-        return response.status(500).json({ error: 'Authentication service temporarily unavailable.' })
+        return databaseError(response, 'CALLS_SELECT', error)
       }
 
       const userIds = [...new Set((rows || []).flatMap((row) => [row.caller_id, row.receiver_id]))]
-      const userMap = await getUserMap(supabase, userIds)
+      const { users, error: usersError } = await getUserMap(supabase, userIds)
+      if (usersError) return databaseError(response, 'CALLS_USER_LOOKUP', usersError)
+      const userMap = Object.fromEntries((users || []).map((user) => [user.id, user]))
       const calls = (rows || []).map((row) => normalizeCallRow(row, userMap)).filter(Boolean)
       return response.status(200).json({ calls })
     }
@@ -73,7 +90,8 @@ export default async function handler(request, response) {
         .single()
 
       if (fetchError) {
-        return response.status(404).json({ error: 'Call not found.' })
+        if (fetchError.code === 'PGRST116') return response.status(404).json({ error: 'Call not found.' })
+        return databaseError(response, 'CALLS_LOOKUP', fetchError)
       }
 
       const transitions = {
@@ -100,15 +118,12 @@ export default async function handler(request, response) {
         .single()
 
       if (updateError) {
-        console.error('CALLS_DATABASE_ERROR', {
-          operation: 'update_call',
-          code: updateError.code,
-          message: updateError.message,
-        })
-        return response.status(500).json({ error: 'Authentication service temporarily unavailable.' })
+        return databaseError(response, 'CALLS_UPDATE', updateError)
       }
 
-      const userMap = await getUserMap(supabase, [updatedCall.caller_id, updatedCall.receiver_id])
+      const { users, error: usersError } = await getUserMap(supabase, [updatedCall.caller_id, updatedCall.receiver_id])
+      if (usersError) return databaseError(response, 'CALLS_USER_LOOKUP', usersError)
+      const userMap = Object.fromEntries((users || []).map((user) => [user.id, user]))
       return response.status(200).json({ call: normalizeCallRow(updatedCall, userMap) })
     }
 
@@ -121,7 +136,8 @@ export default async function handler(request, response) {
       .eq('id', receiverId)
       .maybeSingle()
 
-    if (receiverError || !receiver) {
+    if (receiverError) return databaseError(response, 'CALLS_TARGET_USER', receiverError)
+    if (!receiver) {
       return response.status(404).json({ error: 'Caller or receiver not found.' })
     }
 
@@ -132,12 +148,7 @@ export default async function handler(request, response) {
       .in('status', ['ringing', 'accepted'])
 
     if (activeError) {
-      console.error('CALLS_DATABASE_ERROR', {
-        operation: 'check_active_calls',
-        code: activeError.code,
-        message: activeError.message,
-      })
-      return response.status(500).json({ error: 'Authentication service temporarily unavailable.' })
+      return databaseError(response, 'CALLS_ACTIVE_LOOKUP', activeError)
     }
 
     if ((activeCalls || []).length > 0) {
@@ -159,22 +170,16 @@ export default async function handler(request, response) {
       .single()
 
     if (createError) {
-      console.error('CALLS_DATABASE_ERROR', {
-        operation: 'create_call',
-        code: createError.code,
-        message: createError.message,
-      })
-      return response.status(500).json({ error: 'Authentication service temporarily unavailable.' })
+      return databaseError(response, 'CALLS_INSERT', createError)
     }
 
-    const userMap = await getUserMap(supabase, [createdCall.caller_id, createdCall.receiver_id])
+    const { users, error: usersError } = await getUserMap(supabase, [createdCall.caller_id, createdCall.receiver_id])
+    if (usersError) return databaseError(response, 'CALLS_USER_LOOKUP', usersError)
+    const userMap = Object.fromEntries((users || []).map((user) => [user.id, user]))
     return response.status(201).json({ call: normalizeCallRow(createdCall, userMap) })
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown call error'
-    console.error('CALLS_DATABASE_ERROR', {
-      operation: 'call_flow',
-      message,
-    })
-    return response.status(500).json({ error: 'Authentication service temporarily unavailable.' })
+    console.error('CALLS_ERROR', { message })
+    return response.status(500).json({ error: 'Call operation failed.', message })
   }
 }
