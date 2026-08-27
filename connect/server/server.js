@@ -339,6 +339,7 @@ app.post('/api/nirbhaya/callback', (request, response) => {
   const payload = request.body || {}
   const { call_id, risk_score, risk_level, recommended_action, reasons } = payload
 
+  console.info(`[SYSTEM1-CALLBACK] call_id=${call_id} risk_score=${risk_score} risk_level=${risk_level} action=${recommended_action}`)
   console.info(`[SYSTEM 1 CALLBACK] Security risk update received for call ${call_id}: Score=${risk_score} Level=${risk_level} Action=${recommended_action}`)
 
   if (call_id && calls.has(call_id)) {

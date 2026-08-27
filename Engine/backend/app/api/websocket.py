@@ -83,9 +83,18 @@ async def websocket_analysis_endpoint(websocket: WebSocket, analysis_id: str):
                 audio_bytes = message["bytes"]
                 window_index += 1
                 
+                print(f"[AUDIO-RECEIVED] call_id={analysis_id} bytes={len(audio_bytes)} timestamp={start_pipeline_time}")
+
                 # 1. Process pipeline (in-memory)
                 processed_audio = preprocessor.process_audio_bytes(audio_bytes)
+                samples_count = processed_audio['tensor'].shape[-1] if 'tensor' in processed_audio and hasattr(processed_audio['tensor'], 'shape') else len(audio_bytes) // 2
+                print(f"[AUDIO-DECODE] call_id={analysis_id} sample_rate={processed_audio['sample_rate']} channels={processed_audio['channels']} samples={samples_count} duration={processed_audio['duration_ms']} rms={processed_audio['rms_energy']}")
+                print(f"[VAD] call_id={analysis_id} rms={processed_audio['rms_energy']} speech_detected={processed_audio['speech_detected']}")
+
+                print(f"[AASIST-START] call_id={analysis_id} samples={samples_count}")
                 voice_res = voice_authenticity_engine.analyze_audio(processed_audio)
+                print(f"[AASIST-RESULT] call_id={analysis_id} spoof_logit={voice_res.get('spoof_logit')} bonafide_logit={voice_res.get('bonafide_logit')} synthetic_probability={voice_res.get('synthetic_probability')} authenticity_probability={voice_res.get('authenticity_score')} confidence={voice_res.get('confidence')}")
+
                 speaker_res = speaker_verifier.compare_speaker(processed_audio)
                 asr_res = await asr_engine.transcribe(audio_bytes)
                 context_res = context_engine.analyze_text(asr_res.get("text", ""))
@@ -103,10 +112,7 @@ async def websocket_analysis_endpoint(websocket: WebSocket, analysis_id: str):
                 policy_output = policy_engine.evaluate(risk_output=risk_output, profile_name="BANK")
                 pipeline_latency_ms = round((time.time() - start_pipeline_time) * 1000, 2)
 
-                # Safe Metadata Logging
-                print(f"[AUDIO-INGEST] call_id={analysis_id} chunk={window_index} bytes_received={len(audio_bytes)} sample_rate={processed_audio['sample_rate']} speech_detected={processed_audio['speech_detected']}")
-                print(f"[AI-ANALYSIS] call_id={analysis_id} window={window_index} synthetic_probability={voice_res.get('synthetic_probability')} model_confidence={voice_res.get('confidence')} audio_quality={processed_audio['audio_quality_score']}")
-                print(f"[RISK] call_id={analysis_id} voice_authenticity={voice_res.get('authenticity_score')} speaker_score={speaker_res.get('similarity_score')} context_score={risk_output.get('context_score')} behavior_score={risk_output.get('behavior_score')} final_risk_score={risk_output['risk_score']} risk_level={risk_output['risk_level']}")
+                print(f"[RISK-ENGINE] call_id={analysis_id} synthetic_probability={risk_output.get('synthetic_probability')} speaker_score={risk_output.get('speaker_similarity')} context_score={risk_output.get('context_score')} behavior_score={risk_output.get('behavior_score')} risk_score={risk_output.get('risk_score')} risk_level={risk_output.get('risk_level')} action={policy_output.get('recommended_action')}")
 
                 # 3. Broadcast AUDIO_PROCESSED
                 await manager.broadcast_event(analysis_id, {
@@ -134,6 +140,7 @@ async def websocket_analysis_endpoint(websocket: WebSocket, analysis_id: str):
                     "recommended_action": policy_output["recommended_action"],
                     "processing_latency_ms": pipeline_latency_ms
                 }
+                print(f"[TELEMETRY-SEND] call_id={analysis_id} event=RISK_UPDATED risk_score={risk_output['risk_score']} risk_level={risk_output['risk_level']} synthetic_probability={risk_output['synthetic_probability']} confidence={risk_output['overall_confidence']}")
                 await manager.broadcast_event(analysis_id, risk_event_payload)
 
                 # 5. Broadcast POLICY_UPDATED

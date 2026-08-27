@@ -83,16 +83,18 @@ export function connectEngineStream(analysisId, onEventCallback) {
   }
 
   const wsUrl = `${ENGINE_WS_BASE}/analysis/${analysisId}`;
-  console.info(`[ENGINE] Connecting to WebSocket: ${wsUrl}`);
+  console.info(`[DEBUG-ENGINE-WS] URL=${wsUrl} call_id=${analysisId}`);
   socket = new WebSocket(wsUrl);
 
   socket.onopen = () => {
+    console.info(`[DEBUG-ENGINE-WS] CONNECTED`);
     console.info(`[ENGINE] websocket=${wsUrl} connected=true`);
   };
 
   socket.onmessage = (event) => {
     try {
       const data = JSON.parse(event.data);
+      console.info(`[DEBUG-ENGINE-WS] MESSAGE RECEIVED`, { event: data.event, payload: data });
       if (data.event === 'RISK_UPDATED') {
         console.info(`[RISK] score=${data.risk_score} level=${data.risk_level} action=${data.recommended_action}`);
         if (data.synthetic_probability !== undefined) {
@@ -110,7 +112,8 @@ export function connectEngineStream(analysisId, onEventCallback) {
     console.warn('[SYSTEM 1] System 2 Engine WebSocket error', err);
   };
 
-  socket.onclose = () => {
+  socket.onclose = (event) => {
+    console.info(`[DEBUG-ENGINE-WS] CLOSED code=${event.code} reason=${event.reason || 'normal'}`);
     console.info('[SYSTEM 1] System 2 Engine WebSocket disconnected');
   };
 
@@ -180,8 +183,9 @@ function downsampleBuffer(buffer, inputSampleRate, outputSampleRate = 16000) {
  * and streams 2.5s WAV chunks directly into System 2 Engine.
  */
 export function startAudioStreamToEngine(analysisId, mediaStreamTrack, options = {}) {
-  if (!mediaStreamTrack || mediaStreamTrack.readyState === 'ended') {
-    console.warn('[SYSTEM 1] Invalid or ended audio track provided for engine streaming');
+  const track = mediaStreamTrack?.mediaStreamTrack || (mediaStreamTrack instanceof MediaStreamTrack ? mediaStreamTrack : mediaStreamTrack?.track);
+  if (!track || track.readyState === 'ended') {
+    console.warn('[SYSTEM 1] Invalid or ended audio track provided for engine streaming', mediaStreamTrack);
     return () => {};
   }
 
@@ -205,7 +209,7 @@ export function startAudioStreamToEngine(analysisId, mediaStreamTrack, options =
     }
 
     const nativeSampleRate = audioContext.sampleRate || 48000;
-    const mediaStream = new MediaStream([mediaStreamTrack]);
+    const mediaStream = new MediaStream([track]);
     sourceNode = audioContext.createMediaStreamSource(mediaStream);
 
     // Buffer size 4096 frames
@@ -241,10 +245,14 @@ export function startAudioStreamToEngine(analysisId, mediaStreamTrack, options =
         const wavBuffer = encodeWav(chunkSamples, targetSampleRate);
 
         const speechDetected = rmsEnergy > 0.005;
+        const wsReadyState = socket ? (socket.readyState === 1 ? 'OPEN' : socket.readyState) : 'NULL';
+
+        console.info(`[DEBUG-AUDIO-SEND] call_id=${analysisId} websocket_readyState=${wsReadyState} chunk_number=${windowIndex} byte_length=${wavBuffer.byteLength} sample_rate=16000 rms=${rmsEnergy.toFixed(4)}`);
         console.info(`[AUDIO-TAP] call_id=${analysisId} chunk=${windowIndex} sample_rate=16000 channels=1 bytes=${wavBuffer.byteLength} rms=${rmsEnergy.toFixed(4)} speech_detected=${speechDetected}`);
 
         if (socket && socket.readyState === WebSocket.OPEN) {
           socket.send(wavBuffer);
+          console.info(`[DEBUG-ENGINE-WS] BINARY AUDIO SENT`, { chunk: windowIndex, bytes: wavBuffer.byteLength });
         } else {
           // Fallback HTTP multipart upload
           const blob = new Blob([wavBuffer], { type: 'audio/wav' });
