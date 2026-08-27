@@ -187,99 +187,96 @@ async def websocket_analysis_endpoint(websocket: WebSocket, analysis_id: str):
                     except Exception as cb_err:
                         logger.warn(f"[CALLBACK ERROR] Failed callback to System 1: {cb_err}")
 
+                    # 8. Persist Telemetry Metadata to DB safely
+                    try:
+                        async with AsyncSessionLocal() as db:
+                            call_res = await db.execute(select(Call).where(Call.id == analysis_id))
+                            call_obj = call_res.scalars().first()
+                            if not call_obj:
+                                call_obj = Call(
+                                    id=analysis_id,
+                                    caller_id="caller_stream",
+                                    receiver_id="receiver_stream",
+                                    channel="VOIP",
+                                    status="ACTIVE"
+                                )
+                                db.add(call_obj)
+                                await db.flush()
+
+                            session_res = await db.execute(
+                                select(AnalysisSession).where((AnalysisSession.id == analysis_id) | (AnalysisSession.call_id == analysis_id))
+                            )
+                            session_obj = session_res.scalars().first()
+                            if not session_obj:
+                                session_obj = AnalysisSession(
+                                    id=analysis_id,
+                                    call_id=call_obj.id,
+                                    caller_id=call_obj.caller_id,
+                                    receiver_id=call_obj.receiver_id,
+                                    status="PROCESSING"
+                                )
+                                db.add(session_obj)
+                                await db.flush()
+                            else:
+                                session_obj.status = "PROCESSING"
+
+                            window_rec = AudioAnalysisWindow(
+                                id=str(uuid.uuid4()),
+                                analysis_id=session_obj.id,
+                                window_index=window_index,
+                                duration_ms=processed_audio.get("duration_ms", 2500.0),
+                                sample_rate=processed_audio.get("sample_rate", 16000),
+                                channels=processed_audio.get("channels", 1),
+                                speech_detected=processed_audio.get("speech_detected", True),
+                                audio_quality_score=processed_audio.get("audio_quality_score", 1.0)
+                            )
+                            db.add(window_rec)
+                            await db.flush()
+
+                            voice_rec = VoiceAnalysisResult(
+                                analysis_id=session_obj.id,
+                                window_id=window_rec.id,
+                                synthetic_probability=voice_res.get("synthetic_probability"),
+                                authenticity_score=voice_res.get("authenticity_score"),
+                                confidence=voice_res.get("confidence", 0.0),
+                                audio_quality=voice_res.get("audio_quality", 1.0),
+                                model_name=voice_res.get("model_name", settings.VOICE_MODEL_NAME),
+                                model_version=voice_res.get("model_version", settings.VOICE_MODEL_VERSION),
+                                inference_time_ms=voice_res.get("inference_time_ms", 0.0),
+                                status=voice_res.get("status", "SUCCESS")
+                            )
+                            db.add(voice_rec)
+
+                            risk_rec = RiskScore(
+                                analysis_id=session_obj.id,
+                                risk_score=risk_output.get("risk_score", 0.0),
+                                risk_level=risk_output.get("risk_level", "LOW"),
+                                overall_confidence=risk_output.get("overall_confidence", 0.0),
+                                synthetic_probability=risk_output.get("synthetic_probability"),
+                                speaker_similarity=risk_output.get("speaker_similarity"),
+                                context_score=risk_output.get("context_score"),
+                                transaction_score=risk_output.get("transaction_score"),
+                                behavior_score=risk_output.get("behavior_score"),
+                                reasons=risk_output.get("reasons", [])
+                            )
+                            db.add(risk_rec)
+
+                            policy_rec = PolicyDecision(
+                                analysis_id=session_obj.id,
+                                policy_profile=policy_output.get("policy_profile", "BANK"),
+                                recommended_action=policy_output.get("recommended_action", "CONTINUE"),
+                                verification_required=policy_output.get("verification_required", False),
+                                reasons=policy_output.get("reasons", [])
+                            )
+                            db.add(policy_rec)
+
+                            await db.commit()
+                    except Exception as db_err:
+                        logger.warn(f"[DB LOG ERROR] Failed to persist window telemetry: {db_err}")
+
                 except Exception as pipe_err:
                     print(f"[AASIST-ERROR] call_id={analysis_id} window={window_index} error={pipe_err}")
                     logger.exception(f"[PIPELINE ERROR] Audio analysis failed for window {window_index}: {pipe_err}")
-
-                # 8. Persist Telemetry Metadata to DB (No raw audio stored)
-                try:
-                    async with AsyncSessionLocal() as db:
-                        # Ensure call record exists
-                        call_res = await db.execute(select(Call).where(Call.id == analysis_id))
-                        call_obj = call_res.scalars().first()
-                        if not call_obj:
-                            call_obj = Call(
-                                id=analysis_id,
-                                caller_id="caller_stream",
-                                receiver_id="receiver_stream",
-                                channel="VOIP",
-                                status="ACTIVE"
-                            )
-                            db.add(call_obj)
-
-                        # Ensure session record exists
-                        session_res = await db.execute(
-                            select(AnalysisSession).where((AnalysisSession.id == analysis_id) | (AnalysisSession.call_id == analysis_id))
-                        )
-                        session_obj = session_res.scalars().first()
-                        if not session_obj:
-                            session_obj = AnalysisSession(
-                                id=analysis_id,
-                                call_id=analysis_id,
-                                caller_id=call_obj.caller_id,
-                                receiver_id=call_obj.receiver_id,
-                                status="PROCESSING"
-                            )
-                            db.add(session_obj)
-                        else:
-                            session_obj.status = "PROCESSING"
-
-                        # Window Record
-                        window_rec = AudioAnalysisWindow(
-                            id=str(uuid.uuid4()),
-                            analysis_id=session_obj.id,
-                            window_index=window_index,
-                            duration_ms=processed_audio["duration_ms"],
-                            sample_rate=processed_audio["sample_rate"],
-                            channels=processed_audio["channels"],
-                            speech_detected=processed_audio["speech_detected"],
-                            audio_quality_score=processed_audio["audio_quality_score"]
-                        )
-                        db.add(window_rec)
-
-                        # Voice Result
-                        voice_rec = VoiceAnalysisResult(
-                            analysis_id=session_obj.id,
-                            window_id=window_rec.id,
-                            synthetic_probability=voice_res.get("synthetic_probability"),
-                            authenticity_score=voice_res.get("authenticity_score"),
-                            confidence=voice_res.get("confidence", 0.0),
-                            audio_quality=voice_res.get("audio_quality", 1.0),
-                            model_name=voice_res.get("model_name", settings.VOICE_MODEL_NAME),
-                            model_version=voice_res.get("model_version", settings.VOICE_MODEL_VERSION),
-                            inference_time_ms=voice_res.get("inference_time_ms", 0.0),
-                            status=voice_res.get("status", "SUCCESS")
-                        )
-                        db.add(voice_rec)
-
-                        # Risk Score
-                        risk_rec = RiskScore(
-                            analysis_id=session_obj.id,
-                            risk_score=risk_output["risk_score"],
-                            risk_level=risk_output["risk_level"],
-                            overall_confidence=risk_output["overall_confidence"],
-                            synthetic_probability=risk_output["synthetic_probability"],
-                            speaker_similarity=risk_output["speaker_similarity"],
-                            context_score=risk_output["context_score"],
-                            transaction_score=risk_output["transaction_score"],
-                            behavior_score=risk_output["behavior_score"],
-                            reasons=risk_output["reasons"]
-                        )
-                        db.add(risk_rec)
-
-                        # Policy Decision
-                        policy_rec = PolicyDecision(
-                            analysis_id=session_obj.id,
-                            policy_profile=policy_output["policy_profile"],
-                            recommended_action=policy_output["recommended_action"],
-                            verification_required=policy_output["verification_required"],
-                            reasons=policy_output["reasons"]
-                        )
-                        db.add(policy_rec)
-
-                        await db.commit()
-                except Exception as db_err:
-                    logger.warn(f"[DB LOG ERROR] Failed to persist window telemetry: {db_err}")
 
             elif "text" in message:
                 text_data = message["text"]
