@@ -14,7 +14,10 @@ export default async function handler(request, response) {
   }
 
   try {
+    console.info(`SUPABASE_URL_CONFIGURED=${Boolean(process.env.SUPABASE_URL)}`)
+    console.info(`SUPABASE_SERVICE_ROLE_CONFIGURED=${Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY)}`)
     const supabase = getSupabaseAdmin()
+    console.info('LOGIN_STEP=users_query')
     const { data: user, error: userError } = await supabase
       .from('users')
       .select('id, name, phone, email, password_hash, created_at')
@@ -23,46 +26,58 @@ export default async function handler(request, response) {
 
     if (userError) {
       console.error('LOGIN_DATABASE_ERROR', {
-        email: trimmedEmail,
-        operation: 'lookup_user',
         code: userError.code,
         message: userError.message,
+        details: userError.details,
       })
-      return response.status(500).json({ error: 'Authentication service temporarily unavailable.' })
+      return response.status(500).json({
+        error: 'Login users query failed.',
+        code: userError.code,
+        message: userError.message,
+        details: userError.details,
+      })
     }
 
     if (!user) {
       return response.status(401).json({ error: 'Invalid email or password.' })
     }
 
+    console.info('LOGIN_STEP=password_check')
     const passwordMatches = await compare(String(password), user.password_hash)
     if (!passwordMatches) {
       return response.status(401).json({ error: 'Invalid email or password.' })
     }
 
     const sessionToken = generateSessionToken()
+    console.info('LOGIN_STEP=session_hash')
     const sessionHash = await hash(sessionToken, 12)
+    const now = new Date().toISOString()
     const { error: sessionError } = await supabase
       .from('sessions')
       .insert({
         id: createSessionId(),
         user_id: user.id,
         token_hash: sessionHash,
-        created_at: Date.now(),
-        expires_at: Date.now() + 86400000,
+        created_at: now,
+        expires_at: new Date(Date.now() + 86400000).toISOString(),
       })
 
     if (sessionError) {
-      console.error('LOGIN_SESSION_ERROR', {
-        userId: user.id,
-        email: trimmedEmail,
-        operation: 'create_session',
+      console.error('LOGIN_DATABASE_ERROR', {
         code: sessionError.code,
         message: sessionError.message,
+        details: sessionError.details,
       })
-      return response.status(500).json({ error: 'Authentication service temporarily unavailable.' })
+      return response.status(500).json({
+        error: 'Login session insert failed.',
+        code: sessionError.code,
+        message: sessionError.message,
+        details: sessionError.details,
+      })
     }
 
+    console.info('LOGIN_STEP=session_insert')
+    console.info('LOGIN_STEP=response')
     console.info('AUTH_LOGIN_SUCCESS=true')
     console.info('SESSION_CREATED=true')
 
@@ -78,11 +93,7 @@ export default async function handler(request, response) {
     })
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown login error'
-    console.error('LOGIN_DATABASE_ERROR', {
-      email: trimmedEmail,
-      operation: 'login_user',
-      message,
-    })
-    return response.status(500).json({ error: 'Authentication service temporarily unavailable.' })
+    console.error('LOGIN_ERROR', { message })
+    return response.status(500).json({ error: 'Login operation failed.', message })
   }
 }
