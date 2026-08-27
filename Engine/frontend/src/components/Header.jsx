@@ -11,8 +11,8 @@ export default function Header({ activeTab, setActiveTab, healthStatus }) {
         <div className="flex items-center justify-between h-16">
           {/* Logo & Title */}
           <div className="flex items-center space-x-3.5">
-            <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-emerald-600 to-teal-800 flex items-center justify-center text-white shadow-md border border-emerald-500/30">
-              <Shield className="w-6 h-6 text-emerald-100" />
+            <div className="w-10 h-10 rounded-lg bg-slate-900 flex items-center justify-center overflow-hidden shadow-md border border-emerald-500/30">
+              <img src="/logo.png" alt="Nirbhaya Sanchar Logo" className="w-full h-full object-contain p-0.5" onError={(e) => { e.target.onerror = null; e.target.src = '/logo.svg'; }} />
             </div>
             <div>
               <div className="flex items-center space-x-2">

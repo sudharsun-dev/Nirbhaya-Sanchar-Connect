@@ -61,7 +61,7 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId }) {
   // Real AI Outputs from backend AASIST & Risk Engine
   const [riskData, setRiskData] = useState({
     riskScore: null,
-    riskLevel: 'LOW',
+    riskLevel: null, // null until real risk received
     overallConfidence: null,
     syntheticProbability: null,
     voiceAuthenticity: null,
@@ -71,7 +71,7 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId }) {
     transactionScore: null,
     behaviorScore: null,
     reasons: [],
-    recommendedAction: 'CONTINUE',
+    recommendedAction: null, // null until real policy evaluated
     verificationRequired: false,
     windowsAnalyzed: 0,
     lastLatencyMs: null,
@@ -582,16 +582,17 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId }) {
                 <p className="text-xs font-bold text-slate-500 uppercase">RISK LEVEL</p>
                 <p className={`text-2xl font-extrabold mt-1 uppercase ${
                   riskData.riskLevel === 'HIGH' ? 'text-rose-600' :
-                  riskData.riskLevel === 'MEDIUM' ? 'text-amber-600' : 'text-emerald-600'
+                  riskData.riskLevel === 'MEDIUM' ? 'text-amber-600' :
+                  riskData.riskLevel === 'LOW' ? 'text-emerald-600' : 'text-slate-400 text-lg'
                 }`}>
-                  {riskData.riskLevel || 'LOW'}
+                  {riskData.riskLevel || 'ANALYSIS WAITING'}
                 </p>
               </div>
 
               <div className="bg-slate-50 rounded-xl p-4 border border-slate-200 text-center">
                 <p className="text-xs font-bold text-slate-500 uppercase">RECOMMENDED ACTION</p>
-                <p className="text-lg font-bold mt-1 text-slate-900">
-                  {riskData.recommendedAction || 'CONTINUE'}
+                <p className={`text-base font-bold mt-1 uppercase ${riskData.recommendedAction ? 'text-slate-900' : 'text-slate-400'}`}>
+                  {riskData.recommendedAction || 'WAITING FOR ANALYSIS'}
                 </p>
               </div>
             </div>

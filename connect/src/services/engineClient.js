@@ -150,6 +150,32 @@ export async function notifyEngineStartCall(callPayload) {
 }
 
 /**
+ * Downsamples audio buffer from input sample rate (e.g. 48kHz or 44.1kHz) to 16kHz.
+ */
+function downsampleBuffer(buffer, inputSampleRate, outputSampleRate = 16000) {
+  if (inputSampleRate === outputSampleRate) {
+    return buffer;
+  }
+  const sampleRateRatio = inputSampleRate / outputSampleRate;
+  const newLength = Math.round(buffer.length / sampleRateRatio);
+  const result = new Float32Array(newLength);
+  let offsetResult = 0;
+  let offsetBuffer = 0;
+  while (offsetResult < result.length) {
+    const nextOffsetBuffer = Math.round((offsetResult + 1) * sampleRateRatio);
+    let accum = 0, count = 0;
+    for (let i = offsetBuffer; i < nextOffsetBuffer && i < buffer.length; i++) {
+      accum += buffer[i];
+      count++;
+    }
+    result[offsetResult] = count > 0 ? accum / count : 0;
+    offsetResult++;
+    offsetBuffer = nextOffsetBuffer;
+  }
+  return result;
+}
+
+/**
  * Starts real-time Web Audio API PCM capture from a live MediaStreamTrack
  * and streams 2.5s WAV chunks directly into System 2 Engine.
  */
@@ -159,33 +185,44 @@ export function startAudioStreamToEngine(analysisId, mediaStreamTrack, options =
     return () => {};
   }
 
-  const targetSampleRate = options.sampleRate || 16000;
+  const targetSampleRate = 16000;
   const chunkDurationSec = options.chunkDurationSec || 2.5;
   const samplesPerChunk = Math.floor(targetSampleRate * chunkDurationSec);
 
   let audioContext = null;
   let sourceNode = null;
   let processorNode = null;
+  let muteGainNode = null;
   let audioBuffer = [];
   let windowIndex = 0;
   let isStreaming = true;
 
   try {
     const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-    audioContext = new AudioContextClass({ sampleRate: targetSampleRate });
+    audioContext = new AudioContextClass();
+    if (audioContext.state === 'suspended') {
+      audioContext.resume().catch(() => {});
+    }
+
+    const nativeSampleRate = audioContext.sampleRate || 48000;
     const mediaStream = new MediaStream([mediaStreamTrack]);
     sourceNode = audioContext.createMediaStreamSource(mediaStream);
 
     // Buffer size 4096 frames
     processorNode = audioContext.createScriptProcessor(4096, 1, 1);
+    muteGainNode = audioContext.createGain();
+    muteGainNode.gain.value = 0; // Prevent local audio echo while keeping graph active
 
     processorNode.onaudioprocess = (audioProcessingEvent) => {
       if (!isStreaming) return;
-      const inputData = audioProcessingEvent.inputBuffer.getChannelData(0);
+      const rawInput = audioProcessingEvent.inputBuffer.getChannelData(0);
+
+      // Downsample to 16 kHz mono
+      const downsampled = downsampleBuffer(rawInput, nativeSampleRate, targetSampleRate);
 
       // Accumulate samples
-      for (let i = 0; i < inputData.length; i++) {
-        audioBuffer.push(inputData[i]);
+      for (let i = 0; i < downsampled.length; i++) {
+        audioBuffer.push(downsampled[i]);
       }
 
       if (audioBuffer.length >= samplesPerChunk) {
@@ -200,12 +237,11 @@ export function startAudioStreamToEngine(analysisId, mediaStreamTrack, options =
         }
         const rmsEnergy = Math.sqrt(sumSq / chunkSamples.length);
 
-        // Encode to WAV binary buffer
+        // Encode to WAV binary buffer (16 kHz, 16-bit mono)
         const wavBuffer = encodeWav(chunkSamples, targetSampleRate);
 
-        // Send over active WebSocket if available, otherwise fallback to HTTP
         const speechDetected = rmsEnergy > 0.005;
-        console.info(`[AUDIO-TAP] call_id=${analysisId} chunk=${windowIndex} sample_rate=${targetSampleRate} channels=1 samples=${chunkSamples.length} bytes=${wavBuffer.byteLength} rms=${rmsEnergy.toFixed(4)} speech_detected=${speechDetected}`);
+        console.info(`[AUDIO-TAP] call_id=${analysisId} chunk=${windowIndex} sample_rate=16000 channels=1 bytes=${wavBuffer.byteLength} rms=${rmsEnergy.toFixed(4)} speech_detected=${speechDetected}`);
 
         if (socket && socket.readyState === WebSocket.OPEN) {
           socket.send(wavBuffer);
@@ -234,7 +270,8 @@ export function startAudioStreamToEngine(analysisId, mediaStreamTrack, options =
     };
 
     sourceNode.connect(processorNode);
-    processorNode.connect(audioContext.destination);
+    processorNode.connect(muteGainNode);
+    muteGainNode.connect(audioContext.destination);
 
     console.info('[SYSTEM 1] Real audio tap initialized and streaming to Engine:', analysisId);
   } catch (err) {
@@ -247,6 +284,9 @@ export function startAudioStreamToEngine(analysisId, mediaStreamTrack, options =
       if (processorNode && sourceNode) {
         processorNode.disconnect();
         sourceNode.disconnect();
+      }
+      if (muteGainNode) {
+        muteGainNode.disconnect();
       }
       if (audioContext && audioContext.state !== 'closed') {
         audioContext.close();
