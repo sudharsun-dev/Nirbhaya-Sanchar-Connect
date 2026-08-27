@@ -36,13 +36,14 @@ function App() {
   return (
     <main className="app-shell">
       <header className="brand-bar">
-        <img className="brand-app-logo" src="/image.png" alt="Secure voice calling" />
-        <div className="brand-heading"><strong>NIRBHAYA SANCHAR</strong><span>SECURE VOIP CALL SYSTEM</span><small>GOVERNMENT OF INDIA <i aria-hidden="true">•</i> SECURE VOICE COMMUNICATION</small></div>
-        <div className="brand-status"><strong>VOIP CALL SYSTEM</strong><span><i aria-hidden="true" /> SECURE CHANNEL</span></div>
+        <img className="brand-app-logo" src="/image.png" alt="Nirbhaya Sanchar" />
+        <div className="brand-heading"><strong>NIRBHAYA <span>SANCHAR</span></strong><small>SECURE COMMUNICATION</small></div>
+        <div className="brand-status"><i aria-hidden="true" /> ONLINE</div>
       </header>
-      {call ? <CallScreen {...call} onEnded={() => { if (call.callId) updateCall(call.callId, 'end').catch(() => {}); setCall(null) }} /> : profile ? <ContactsScreen profile={profile} onLogout={() => { clearSessionUser(); setProfile(null) }} onManualJoin={() => { clearSessionUser(); setProfile(null) }} onConnected={setCall} /> : <AuthScreen onAuthenticated={setProfile} onManualJoin={() => { clearSessionUser(); setProfile(null) }} />}
-        <nav className="mobile-nav" aria-label="Application navigation"><span className="active"><b aria-hidden="true">◉</b>Contacts</span><span><b aria-hidden="true">☎</b>Calls</span><span><b aria-hidden="true">✉</b>Messages</span><span><b aria-hidden="true">⚙</b>More</span></nav>
-      <footer>PRIVATE VOICE CHANNEL <span aria-hidden="true">•</span> CONNECTIONS ARE ENCRYPTED IN TRANSIT</footer>
+      <div className="app-content">
+        {call ? <CallScreen {...call} onEnded={() => { if (call.callId) updateCall(call.callId, 'end').catch(() => {}); setCall(null) }} /> : profile ? <ContactsScreen profile={profile} onLogout={() => { clearSessionUser(); setProfile(null) }} onManualJoin={() => { clearSessionUser(); setProfile(null) }} onConnected={setCall} /> : <AuthScreen onAuthenticated={setProfile} onManualJoin={() => { clearSessionUser(); setProfile(null) }} />}
+      </div>
+      {profile && !call && <nav className="mobile-nav" aria-label="Application navigation"><span className="active"><b aria-hidden="true">◉</b>Chats</span><span><b aria-hidden="true">☎</b>Calls</span><span><b aria-hidden="true">▢</b>Messages</span><span><b aria-hidden="true">•••</b>More</span></nav>}
     </main>
   )
 }

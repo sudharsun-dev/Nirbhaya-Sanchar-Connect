@@ -81,7 +81,7 @@ export default function ContactsScreen({ profile, onManualJoin, onLogout, onConn
     if (calls.some((call) => [call.caller.id, call.receiver.id].includes(profile.id) && ['ringing', 'calling', 'accepted'].includes(normalizeStatus(call.status)))) return setNotice('You are already in a call.')
     try {
       const result = await createCall(contact.id)
-      addHistory({ id: result.call.id, name: contact.name, direction: 'outgoing', time: Date.now() })
+      addHistory({ id: result.call.id, contactId: contact.id, name: contact.name, direction: 'outgoing', time: Date.now() })
       setNotice(`Calling ${contact.name}...`)
     } catch (error) { setNotice(error.message) }
   }
@@ -90,27 +90,24 @@ export default function ContactsScreen({ profile, onManualJoin, onLogout, onConn
     try {
       const result = await updateCall(callId, action)
       setCalls((current) => current.map((call) => call.id === callId ? result.call : call))
-      if (action === 'accept') { addHistory({ id: result.call.id, name: result.call.caller.name, direction: 'incoming', time: Date.now() }); onConnected({ name: profile.name, roomName: result.call.roomName, callId: result.call.id }) }
+      if (action === 'accept') { addHistory({ id: result.call.id, contactId: result.call.caller.id, name: result.call.caller.name, direction: 'incoming', time: Date.now() }); onConnected({ name: profile.name, roomName: result.call.roomName, callId: result.call.id }) }
       if (action === 'reject') setNotice('Call rejected.')
     } catch (error) { setNotice(error.message) }
   }
 
   return <section className="contacts-layout">
-    <div className="contacts-main"><div className="contacts-heading"><div><p className="eyebrow">AVAILABLE CHANNELS</p><h1>Contacts</h1></div><div className="profile-chip"><span>{profile.name.slice(0, 1).toUpperCase()}</span>{profile.name}</div></div>
-      <div className="search-row" style={{ display: 'flex', gap: '12px', marginBottom: '22px' }}>
-        <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search by ID, name, or phone" style={{ width: '100%', padding: '12px 14px', background: '#12201f', border: '1px solid #2d3937', color: '#e8ece8' }} />
-        <button type="button" onClick={searchUsers} className="primary-button" style={{ width: 'auto', marginTop: 0, padding: '12px 18px' }}>SEARCH</button>
-      </div>
+    <div className="contacts-main"><div className="contacts-heading"><div><p className="eyebrow">GOOD MORNING,</p><h1>{profile.name}</h1><p className="subheading">Secure communications</p></div><div className="profile-chip"><span>{profile.name.slice(0, 1).toUpperCase()}</span></div></div>
+      <div className="search-row"><span aria-hidden="true">⌕</span><input value={search} onChange={(event) => setSearch(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && searchUsers()} placeholder="Search conversations" /><button type="button" onClick={searchUsers} aria-label="Search users">SEARCH</button></div>
       {notice && <div className="call-notice" role="status">{notice}</div>}
-      {searchResults.length > 0 && <div className="contacts-list" style={{ marginBottom: '18px' }}><p className="section-label">SEARCH RESULTS <span>{searchResults.length}</span></p>{searchResults.map((user) => <div className="contact-row" key={user.id}><span className={`presence ${user.online_status !== 'offline' ? 'online' : ''}`} /><div><strong>{user.name}</strong><small>ID: {user.id} • {user.online_status !== 'offline' ? 'Online' : 'Offline'}</small></div><button type="button" onClick={() => callContact(user)}>CALL</button></div>)}</div>}
-      {incoming && <div className="incoming-call"><p className="eyebrow">INCOMING CALL</p><h2>{incoming.caller.name}</h2><p>{incoming.caller.name} is calling you</p><div><button className="reject-button" onClick={() => act(incoming.id, 'reject')}>REJECT</button><button className="accept-button" onClick={() => act(incoming.id, 'accept')}>ACCEPT</button></div></div>}
-      {outgoing && <div className="outgoing-call"><p className="eyebrow">OUTGOING CALL</p><h2>Calling {outgoing.receiver.name}...</h2><p>Ringing...</p><button className="cancel-button" onClick={() => act(outgoing.id, 'cancel')}>CANCEL CALL</button></div>}
-      <div className="contacts-list"><p className="section-label">CONTACTS <span>0</span></p><p className="empty-history">Search a registered user to start a call.</p></div>
+      {searchResults.length > 0 && <div className="contacts-list search-results"><p className="section-label">SEARCH RESULTS <span>{searchResults.length}</span></p>{searchResults.map((user) => <div className="contact-row" key={user.id}><div className="avatar">{user.name.slice(0, 1).toUpperCase()}</div><div className="contact-copy"><strong>{user.name}</strong><small><i className={`presence ${user.online_status !== 'offline' ? 'online' : ''}`} />{user.online_status !== 'offline' ? 'Online' : 'Offline'}</small></div><button type="button" onClick={() => callContact(user)} aria-label={`Call ${user.name}`}>☎</button></div>)}</div>}
+      {incoming && <div className="incoming-call"><p className="eyebrow">INCOMING CALL</p><div className="large-avatar">{incoming.caller.name.slice(0, 1).toUpperCase()}</div><h2>{incoming.caller.name}</h2><p><i className="presence online" /> Online</p><div><button className="reject-button" onClick={() => act(incoming.id, 'reject')}>DECLINE</button><button className="accept-button" onClick={() => act(incoming.id, 'accept')}>ANSWER</button></div></div>}
+      {outgoing && <div className="outgoing-call"><div className="avatar">{outgoing.receiver.name.slice(0, 1).toUpperCase()}</div><div><p className="eyebrow">CALLING</p><h2>{outgoing.receiver.name}</h2><p><i className="presence online" /> Ringing...</p></div><button className="cancel-button" onClick={() => act(outgoing.id, 'cancel')} aria-label="Cancel call">×</button></div>}
+      <div className="conversation-section"><p className="section-label">RECENT CONVERSATIONS</p>{history.length ? history.map((entry) => <div className="conversation-row" key={entry.id}><div className="avatar">{entry.name.slice(0, 1).toUpperCase()}</div><div className="contact-copy"><strong>{entry.name}</strong><small>{entry.direction === 'outgoing' ? 'Voice call' : 'Incoming voice call'}</small></div><time>{displayTime(entry.time)}</time>{entry.contactId && <button type="button" onClick={() => callContact({ id: entry.contactId, name: entry.name, online_status: 'online' })} aria-label={`Call ${entry.name}`}>☎</button>}</div>) : <p className="empty-history">Search a registered user to start a call.</p>}</div>
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', marginTop: '18px' }}>
         <button className="manual-link" onClick={onManualJoin}>JOIN ROOM MANUALLY</button>
         <button className="manual-link" type="button" onClick={onLogout}>LOGOUT</button>
       </div>
     </div>
-    <aside className="history-panel"><p className="eyebrow">RECENT ACTIVITY</p><h2>Call history</h2>{history.length ? history.map((entry) => <div className="history-item" key={entry.id}><strong>{entry.direction === 'outgoing' ? '↗' : '↙'} {entry.name}</strong><small>{displayTime(entry.time)} · {entry.direction}</small></div>) : <p className="empty-history">Your recent calls will appear here.</p>}</aside>
+    <aside className="history-panel"><p className="eyebrow">PRIVATE CHANNEL</p><h2>Ready when you are.</h2><p className="empty-history">Calls are encrypted in transit.</p></aside>
   </section>
 }

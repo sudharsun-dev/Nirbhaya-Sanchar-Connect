@@ -98,7 +98,7 @@ export default function AuthScreen({ onAuthenticated, onManualJoin }) {
         {error && <p className="form-error" role="alert">{error}</p>}
 
         <button className="primary-button" type="submit" disabled={loading}>
-          {loading ? 'PLEASE WAIT...' : mode === 'register' ? 'CREATE ACCOUNT' : 'LOGIN TO DASHBOARD'} <span aria-hidden="true">↗</span>
+          {loading ? 'PLEASE WAIT...' : mode === 'register' ? 'CREATE ACCOUNT' : 'LOGIN TO SANCHAR'} <span aria-hidden="true">↗</span>
         </button>
 
         <button className="manual-link" type="button" onClick={onManualJoin}>ADVANCED / TEST MODE</button>
