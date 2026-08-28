@@ -13,9 +13,8 @@ from app.database.models import (
     SpeakerAnalysisResult, AsrResult, ContextAnalysisResult, RiskScore,
     PolicyDecision, Alert, AuditLog
 )
-from app.config import settings
 from app.services.audio.preprocessor import preprocessor
-from app.services.voice_detection.pretrained_deepfake_detector import pretrained_detector as voice_detector
+from app.services.voice_detection import voice_detector
 from app.services.speaker.verifier import speaker_verifier
 from app.services.asr.asr_engine import asr_engine
 from app.services.context.context_engine import context_engine

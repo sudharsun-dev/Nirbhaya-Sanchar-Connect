@@ -21,7 +21,7 @@ from app.schemas.schemas import (
 )
 
 from app.services.audio.preprocessor import preprocessor
-from app.services.voice_detection.pretrained_deepfake_detector import pretrained_detector as voice_detector
+from app.services.voice_detection import voice_detector, pretrained_detector, free_detector
 from app.services.speaker.verifier import speaker_verifier
 from app.services.asr.asr_engine import asr_engine
 from app.services.context.context_engine import context_engine
@@ -69,7 +69,8 @@ async def get_system_health():
 
     overall_status = "ONLINE" if db_status == "ONLINE" else "DEGRADED"
 
-    health_info = voice_detector.get_health_status()
+    voice_health = voice_detector.get_health_status()
+    pretrained_health = pretrained_detector.get_health_status()
 
     return SystemHealthResponse(
         app=settings.APP_NAME,
@@ -77,15 +78,25 @@ async def get_system_health():
         status=overall_status,
         services={
             "database": ServiceHealthStatus(status=db_status, message=f"Database is {db_status}"),
+            "voice_authenticity": ServiceHealthStatus(
+                status=voice_health["status"],
+                message=voice_health["message"],
+                details=voice_health["details"]
+            ),
+            "pretrained_detector": ServiceHealthStatus(
+                status=pretrained_health["status"],
+                message=pretrained_health["message"],
+                details=pretrained_health["details"]
+            ),
             "pretrained_deepfake_detector": ServiceHealthStatus(
-                status=health_info["status"],
-                message=health_info["message"],
-                details=health_info["details"]
+                status=pretrained_health["status"],
+                message=pretrained_health["message"],
+                details=pretrained_health["details"]
             ),
             "resemble": ServiceHealthStatus(
-                status=health_info["status"],
-                message=health_info["message"],
-                details=health_info["details"]
+                status=voice_health["status"],
+                message=voice_health["message"],
+                details=voice_health["details"]
             ),
             "speaker_verifier": ServiceHealthStatus(status=speaker_status, details={"model": speaker_verifier.model_name}),
             "asr_engine": ServiceHealthStatus(status=asr_status, details={"provider": settings.ASR_PROVIDER, "model": settings.ASR_MODEL}),
