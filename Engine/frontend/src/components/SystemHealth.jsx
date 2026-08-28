@@ -72,12 +72,12 @@ export default function SystemHealth({ healthStatus }) {
           </div>
         </div>
 
-        {/* Resemble AI Voice Deepfake Detector */}
+        {/* Voice Authenticity Engine */}
         <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm space-y-3">
           <div className="flex justify-between items-center">
             <div className="flex items-center space-x-2">
               <Cpu className="w-5 h-5 text-cyan-600" />
-              <h3 className="text-xs font-bold text-slate-900 uppercase">Resemble AI Detector</h3>
+              <h3 className="text-xs font-bold text-slate-900 uppercase">VOICE AUTHENTICITY ENGINE</h3>
             </div>
             {services.resemble?.status === 'CONFIGURED' ? (
               <span className="inline-flex items-center gap-1 bg-emerald-100 text-emerald-800 font-bold text-[11px] px-2.5 py-0.5 rounded-full border border-emerald-200">
@@ -89,11 +89,11 @@ export default function SystemHealth({ healthStatus }) {
               </span>
             )}
           </div>
-          <p className="text-xs text-slate-500">Authoritative Streaming Deepfake & Voice Impersonation Model</p>
+          <p className="text-xs text-slate-500">Real‑time Voice Authenticity & Fraud Detection Engine</p>
           <div className="pt-2 border-t border-slate-100 text-[11px] text-slate-600 space-y-1 font-mono">
             <div className="flex justify-between">
               <span>Provider:</span>
-              <span className="font-semibold text-slate-800">Resemble AI</span>
+              <span className="font-semibold text-slate-800">VOICE AUTHENTICITY ENGINE</span>
             </div>
             <div className="flex justify-between">
               <span>Engine:</span>
@@ -122,7 +122,7 @@ export default function SystemHealth({ healthStatus }) {
           <p className="text-xs text-slate-500">ECAPA-TDNN Acoustic Spectral Embedding</p>
           <div className="pt-2 border-t border-slate-100 text-[11px] text-slate-600 flex justify-between font-mono">
             <span>Architecture:</span>
-            <span className="font-semibold text-slate-800">ECAPA-TDNN</span>
+            <span className="font-semibold text-slate-800">VOICE AUTHENTICITY ENGINE</span>
           </div>
         </div>
 

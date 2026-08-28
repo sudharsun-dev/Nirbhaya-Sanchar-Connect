@@ -83,7 +83,7 @@ export default function Dashboard({ onStartCallClick, onSelectCall }) {
           <div className="bg-slate-950/60 p-2.5 rounded-lg border border-slate-800 flex items-center gap-2.5">
             <Cpu className="w-4 h-4 text-cyan-400" />
             <div>
-              <p className="text-[10px] text-slate-400 font-mono uppercase">RESEMBLE AI</p>
+              <p className="text-[10px] text-slate-400 font-mono uppercase">VOICE AUTHENTICITY ENGINE</p>
               <p className="text-xs font-bold text-slate-100">{isResembleConfigured ? 'CONFIGURED' : 'NOT CONFIGURED'}</p>
             </div>
           </div>

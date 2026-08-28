@@ -24,7 +24,7 @@ export default function Header({ activeTab, setActiveTab, healthStatus }) {
                 </span>
               </div>
               <p className="text-[11px] text-slate-400 font-medium tracking-wide uppercase">
-                AI-POWERED VOICE IMPERSONATION SECURITY & FRAUD PREVENTION
+                SECURE VOICE COMMUNICATION & AUTHENTICITY ENGINE
               </p>
             </div>
           </div>
