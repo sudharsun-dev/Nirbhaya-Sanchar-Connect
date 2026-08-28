@@ -360,7 +360,8 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId, globalQA
           setIsMicActive(false);
           setRmsVolume(0);
         } else if (data.event === 'AUDIO_PROCESSED') {
-          console.info(`[AUDIO-RECEIVED]\ncall_id=${targetId}\nbytes=${data.bytes || 0}\nsamples=${data.samples || 0}`);
+          console.info(`[AUDIO-RECEIVED]\ncall_id=${targetId}\nbytes=${data.bytes || 0}\nsamples=${data.samples || 0}\nrms=${data.rms_energy || 0}`);
+          console.info(`[AUDIO-WINDOW]\ncall_id=${targetId}\nwindow=${data.window_index || 1}\nsamples=40000`);
           setAudioStreamState('AUDIO RECEIVING');
           setIsMicActive(true);
           setRmsVolume(data.rms_energy || 0.08);

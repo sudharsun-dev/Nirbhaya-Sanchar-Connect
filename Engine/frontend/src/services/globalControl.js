@@ -74,6 +74,7 @@ export async function initQAControl() {
   if (_initialized) return _state;
   _initialized = true;
 
+  console.info(`[SUPABASE]\nproject_configured=${Boolean(supabase)}`);
   console.info('[QA-CONTROL] Initializing from Supabase qa_control table');
 
   if (!supabase) {
@@ -100,6 +101,7 @@ export async function initQAControl() {
         score: data.score ?? SCORE_MAP[data.scenario] ?? 15.0,
         updated_at: data.updated_at,
       };
+      console.info(`[QA]\ndatabase_read=true`);
       console.info(`[QA-DB-READ] enabled=${_state.enabled} scenario=${_state.scenario} score=${_state.score}`);
       _notify(_state);
     }
@@ -130,12 +132,14 @@ export async function initQAControl() {
             updated_at: row.updated_at,
           };
           _state = newState;
+          console.info(`[QA-REALTIME]\nreceived=true\nscenario=${newState.scenario}\nscore=${newState.score}`);
           console.log(`[QA-REALTIME-UPDATE]\nscenario=${newState.scenario}\nscore=${newState.score}\nenabled=${newState.enabled}`);
           _notify(newState);
         }
       )
       .subscribe((status) => {
         if (status === 'SUBSCRIBED') {
+          console.info('[QA]\nrealtime_status=SUBSCRIBED');
           console.info('[QA-CONTROL] Supabase Realtime subscribed — multi-device sync ACTIVE');
         } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
           console.warn('[QA-CONTROL] Supabase Realtime disconnected');
@@ -185,6 +189,7 @@ export async function setQAState(enabled, scenario = 'HIGH') {
       if (error) {
         console.warn('[QA-CONTROL] Supabase write failed:', error.message);
       } else {
+        console.info(`[QA]\ndatabase_update=true`);
         console.info(`[QA-DB-WRITE] enabled=${enabled} scenario=${safeScenario} score=${score}`);
       }
     } catch (err) {
