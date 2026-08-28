@@ -42,6 +42,8 @@ function _notify(state) {
   });
 }
 
+let _rowId = 1;
+
 /**
  * Returns the current in-memory QA state, or null if not yet loaded.
  */
@@ -56,7 +58,6 @@ export function getQAState() {
 export function subscribeToQAChanges(callback) {
   if (typeof callback !== 'function') return () => {};
   _listeners.add(callback);
-  // Immediately call with current state if available
   if (_state !== null) {
     try { callback(_state); } catch (_) {}
   }
@@ -85,14 +86,15 @@ export async function initQAControl() {
     const { data, error } = await supabase
       .from('qa_control')
       .select('id, enabled, scenario, score, updated_at')
-      .eq('id', QA_ROW_ID)
-      .single();
+      .limit(1)
+      .maybeSingle();
 
     if (error) {
       console.warn('[QA-CONTROL] Could not read qa_control from Supabase:', error.message);
-      // Do NOT set _state to a default — keep null so consumers know it's unloaded
     } else if (data) {
+      _rowId = data.id || 1;
       _state = {
+        id: _rowId,
         enabled: Boolean(data.enabled),
         scenario: data.scenario || 'LOW',
         score: data.score ?? SCORE_MAP[data.scenario] ?? 15.0,
@@ -115,19 +117,20 @@ export async function initQAControl() {
           event: '*',
           schema: 'public',
           table: 'qa_control',
-          filter: `id=eq.${QA_ROW_ID}`,
         },
         (payload) => {
           const row = payload.new;
           if (!row) return;
+          _rowId = row.id || _rowId;
           const newState = {
+            id: _rowId,
             enabled: Boolean(row.enabled),
             scenario: row.scenario || 'LOW',
             score: row.score ?? SCORE_MAP[row.scenario] ?? 15.0,
             updated_at: row.updated_at,
           };
           _state = newState;
-          console.info(`[QA-REALTIME] enabled=${newState.enabled} scenario=${newState.scenario} score=${newState.score}`);
+          console.log(`[QA-REALTIME-UPDATE]\nscenario=${newState.scenario}\nscore=${newState.score}\nenabled=${newState.enabled}`);
           _notify(newState);
         }
       )
@@ -173,7 +176,7 @@ export async function setQAState(enabled, scenario = 'HIGH') {
       const { error } = await supabase
         .from('qa_control')
         .upsert({
-          id: QA_ROW_ID,
+          id: _rowId || 1,
           enabled: Boolean(enabled),
           scenario: safeScenario,
           score,

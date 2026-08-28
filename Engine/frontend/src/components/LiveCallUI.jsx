@@ -247,41 +247,8 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId, globalQA
     }
   }, [activeCall]);
 
-  // Periodic & initial fetch of global QA state (resilient fallback alongside WebSocket)
-  useEffect(() => {
-    let mounted = true;
-    const checkQA = async () => {
-      try {
-        const s = await fetchQAState();
-        if (!mounted || !s || s.enabled === undefined) return;
-        setQaState(s);
-        if (s.enabled) {
-          const simData = getSimulatedDataForScenario(s.scenario || 'HIGH');
-          setRiskData((prev) => ({
-            ...prev,
-            riskScore: simData.risk_score,
-            riskLevel: simData.risk_level,
-            syntheticProbability: simData.synthetic_probability,
-            voiceAuthenticity: simData.authenticity_score,
-            recommendedAction: simData.action,
-            reasons: simData.reasons,
-            simulated: true,
-          }));
-        } else {
-          setRiskData((prev) => (prev.simulated ? { ...prev, simulated: false } : prev));
-        }
-      } catch (err) {
-        console.warn('[QA-FETCH] Warning fetching QA state:', err);
-      }
-    };
+  // Note: QA state is managed at App root (App.jsx) via globalQAState prop & Supabase Realtime
 
-    checkQA();
-    const interval = setInterval(checkQA, 2500);
-    return () => {
-      mounted = false;
-      clearInterval(interval);
-    };
-  }, [getSimulatedDataForScenario]);
 
   // Diagnostic Pipeline tracker
   const [pipelineState, setPipelineState] = useState({
