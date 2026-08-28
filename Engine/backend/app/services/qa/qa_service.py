@@ -1,6 +1,10 @@
 import random
+import asyncio
+import logging
 from typing import Dict, Any, Literal, Optional
 from datetime import datetime, timezone
+
+logger = logging.getLogger("nirbhaya.qa_service")
 
 QAScenarioType = Literal["LOW", "MEDIUM", "HIGH"]
 
@@ -8,6 +12,7 @@ class GlobalQAService:
     """
     Global QA Test State Manager for Nirbhaya Sanchar System 2.
     Synchronizes test scenario state across all connected browser clients via Render backend.
+    Persists configuration in the backend database (qa_state table).
     Generates realistic, smoothed random-walk variations within each strict scenario range.
     Protects production fraud callbacks and DB from simulated data.
     """
@@ -37,7 +42,79 @@ class GlobalQAService:
                 else: # LOW
                     self._current_score = 14.2
         self._updated_at = datetime.now(timezone.utc).isoformat()
+
+        # Try to asynchronously persist to database if event loop is running
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                asyncio.create_task(self.sync_to_db(self._enabled, self._scenario))
+        except Exception:
+            pass
+
         return self.get_state()
+
+    async def load_from_db(self) -> Dict[str, Any]:
+        """
+        Loads the persistent QA state from the database on startup.
+        """
+        try:
+            from app.database.session import AsyncSessionLocal
+            from app.database.models import QAStateRecord
+            from sqlalchemy.future import select
+
+            async with AsyncSessionLocal() as session:
+                result = await session.execute(
+                    select(QAStateRecord).where(QAStateRecord.id == "global_qa")
+                )
+                record = result.scalars().first()
+                if record:
+                    self._enabled = record.enabled
+                    self._scenario = record.scenario if record.scenario in ["LOW", "MEDIUM", "HIGH"] else "LOW"
+                    if record.updated_at:
+                        self._updated_at = record.updated_at.isoformat()
+                    if self._scenario == "HIGH":
+                        self._current_score = 95.4
+                    elif self._scenario == "MEDIUM":
+                        self._current_score = 55.1
+                    else:
+                        self._current_score = 14.2
+                    logger.info(f"[QA-DB-LOAD] Successfully restored QA state: enabled={self._enabled} scenario={self._scenario}")
+                    print(f"[QA-DB-LOAD] Restored QA state from DB: enabled={self._enabled} scenario={self._scenario}")
+        except Exception as e:
+            logger.warning(f"[QA-DB-LOAD] Notice: Could not load QA state from DB: {e}")
+        return self.get_state()
+
+    async def sync_to_db(self, enabled: bool, scenario: str):
+        """
+        Persists QA state into the database record.
+        """
+        try:
+            from app.database.session import AsyncSessionLocal
+            from app.database.models import QAStateRecord
+            from sqlalchemy.future import select
+
+            async with AsyncSessionLocal() as session:
+                result = await session.execute(
+                    select(QAStateRecord).where(QAStateRecord.id == "global_qa")
+                )
+                record = result.scalars().first()
+                now = datetime.now(timezone.utc)
+                if record:
+                    record.enabled = enabled
+                    record.scenario = scenario
+                    record.updated_at = now
+                else:
+                    record = QAStateRecord(
+                        id="global_qa",
+                        enabled=enabled,
+                        scenario=scenario,
+                        updated_at=now
+                    )
+                    session.add(record)
+                await session.commit()
+                logger.info(f"[QA-DB-SAVE] Persisted QA state to DB: enabled={enabled} scenario={scenario}")
+        except Exception as e:
+            logger.warning(f"[QA-DB-SAVE] Warning persisting QA state to DB: {e}")
 
     def is_enabled(self) -> bool:
         return self._enabled
@@ -66,7 +143,7 @@ class GlobalQAService:
         else: # LOW
             min_r, max_r, center = 5.0, 25.0, 15.0
 
-        # Controlled random walk step (maximum +/- 1.5, drift slightly towards center)
+        # Controlled random walk step (maximum +/- 1.2, drift slightly towards center)
         drift = (center - self._current_score) * 0.15
         delta = random.uniform(-1.2, 1.2) + drift
         step = max(-3.0, min(3.0, delta))

@@ -193,3 +193,11 @@ class FeedbackLog(Base):
     user_id = Column(String, nullable=True)
     notes = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+class QAStateRecord(Base):
+    __tablename__ = "qa_state"
+
+    id = Column(String, primary_key=True, default="global_qa")
+    enabled = Column(Boolean, default=False, nullable=False)
+    scenario = Column(String, default="LOW", nullable=False) # LOW, MEDIUM, HIGH
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

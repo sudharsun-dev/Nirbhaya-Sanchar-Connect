@@ -20,6 +20,8 @@ async def lifespan(app: FastAPI):
     try:
         await init_db()
         print("[DATABASE] INIT SUCCESS - status=ONLINE")
+        from app.services.qa import qa_service
+        await qa_service.load_from_db()
     except Exception as db_err:
         print(f"[DATABASE] status=OFFLINE error={db_err}")
 

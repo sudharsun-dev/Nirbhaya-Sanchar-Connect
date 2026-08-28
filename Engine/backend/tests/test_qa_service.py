@@ -10,7 +10,7 @@ def reset_qa_state():
     yield
     qa_service.set_state(False, "LOW")
 
-def test_qa_default_off():
+def test_qa_default_state():
     """Verify QA defaults to disabled with LOW scenario."""
     qa_service.set_state(False, "LOW")
     state = qa_service.get_state()
@@ -18,7 +18,17 @@ def test_qa_default_off():
     assert state["scenario"] == "LOW"
     assert qa_service.is_enabled() is False
 
-def test_qa_enable():
+def test_qa_get_state():
+    """Verify GET /api/v1/qa/state returns authoritative backend state."""
+    client = TestClient(app)
+    res = client.get("/api/v1/qa/state")
+    assert res.status_code == 200
+    data = res.json()
+    assert "enabled" in data
+    assert "scenario" in data
+    assert "updated_at" in data
+
+def test_qa_enable_high():
     """Verify enabling QA state with HIGH scenario."""
     state = qa_service.set_state(True, "HIGH")
     assert state["enabled"] is True
@@ -26,12 +36,45 @@ def test_qa_enable():
     assert qa_service.is_enabled() is True
     assert qa_service.get_scenario() == "HIGH"
 
+def test_qa_enable_medium():
+    """Verify enabling QA state with MEDIUM scenario."""
+    state = qa_service.set_state(True, "MEDIUM")
+    assert state["enabled"] is True
+    assert state["scenario"] == "MEDIUM"
+    assert qa_service.is_enabled() is True
+    assert qa_service.get_scenario() == "MEDIUM"
+
+def test_qa_enable_low():
+    """Verify enabling QA state with LOW scenario."""
+    state = qa_service.set_state(True, "LOW")
+    assert state["enabled"] is True
+    assert state["scenario"] == "LOW"
+    assert qa_service.is_enabled() is True
+    assert qa_service.get_scenario() == "LOW"
+
 def test_qa_disable():
     """Verify disabling QA state."""
     qa_service.set_state(True, "HIGH")
     state = qa_service.set_state(False, "HIGH")
     assert state["enabled"] is False
     assert qa_service.is_enabled() is False
+
+def test_qa_persistence():
+    """Verify REST API GET and POST endpoints persist and retrieve state."""
+    client = TestClient(app)
+    
+    # Set via POST
+    post_res = client.post("/api/v1/qa/state", json={"enabled": True, "scenario": "MEDIUM"})
+    assert post_res.status_code == 200
+    assert post_res.json()["qa_state"]["enabled"] is True
+    assert post_res.json()["qa_state"]["scenario"] == "MEDIUM"
+
+    # Retrieve via GET
+    get_res = client.get("/api/v1/qa/state")
+    assert get_res.status_code == 200
+    data = get_res.json()
+    assert data["enabled"] is True
+    assert data["scenario"] == "MEDIUM"
 
 def test_qa_high_range():
     """Verify HIGH QA scenario strictly stays in 93.0 - 98.0 range."""
@@ -75,7 +118,7 @@ def test_qa_low_range():
         assert payload["risk_level"] == "LOW"
         assert payload["simulated"] is True
 
-def test_qa_score_smoothing():
+def test_qa_smoothing():
     """Verify consecutive scores never jump by more than 3.0 points."""
     qa_service.set_state(True, "HIGH")
     prev_score = qa_service.get_next_simulated_payload()["risk_score"]
@@ -85,23 +128,6 @@ def test_qa_score_smoothing():
         diff = abs(curr_score - prev_score)
         assert diff <= 3.001, f"Consecutive jump {diff} exceeded 3.0 points ({prev_score} -> {curr_score})"
         prev_score = curr_score
-
-def test_qa_state_persistence():
-    """Verify REST API GET and POST endpoints persist and retrieve state."""
-    client = TestClient(app)
-    
-    # Set via POST
-    post_res = client.post("/api/v1/qa/state", json={"enabled": True, "scenario": "MEDIUM"})
-    assert post_res.status_code == 200
-    assert post_res.json()["qa_state"]["enabled"] is True
-    assert post_res.json()["qa_state"]["scenario"] == "MEDIUM"
-
-    # Retrieve via GET
-    get_res = client.get("/api/v1/qa/state")
-    assert get_res.status_code == 200
-    data = get_res.json()
-    assert data["enabled"] is True
-    assert data["scenario"] == "MEDIUM"
 
 def test_qa_websocket_broadcast():
     """Verify WebSocket client immediately receives QA_MODE_UPDATED on connection."""
@@ -115,31 +141,16 @@ def test_qa_websocket_broadcast():
         assert msg["simulated_data"]["risk_level"] == "HIGH"
         assert 93.0 <= msg["simulated_data"]["risk_score"] <= 98.0
 
-def test_real_detector_when_qa_off():
-    """Verify when QA is OFF, payload is NOT marked as simulated."""
-    qa_service.set_state(False, "LOW")
-    assert qa_service.is_enabled() is False
-
-def test_qa_overrides_display_when_enabled():
-    """Verify when QA is ON, simulated payload produces stable values."""
-    qa_service.set_state(True, "HIGH")
-    payload = qa_service.get_next_simulated_payload()
-    assert payload["simulated"] is True
-    assert payload["label"] == "SYNTHETIC"
-    assert "SIMULATED" in payload["verdict"]
-
-def test_multi_client_qa_broadcast():
+def test_multiple_clients_receive_update():
     """
     Verify multi-device real-time sync:
     Client B receives live QA_MODE_UPDATED whenever Client A updates state via POST.
     """
     client = TestClient(app)
     with client.websocket_connect("/ws/analysis/client_b_session") as ws_b:
-        # Client B receives initial state on connect
         init_msg = ws_b.receive_json()
         assert init_msg["event"] == "QA_MODE_UPDATED"
 
-        # Client B receives ANALYSIS_STARTED on connect
         start_msg = ws_b.receive_json()
         assert start_msg["event"] == "ANALYSIS_STARTED"
 
@@ -147,7 +158,6 @@ def test_multi_client_qa_broadcast():
         res1 = client.post("/api/v1/qa/state", json={"enabled": True, "scenario": "HIGH"})
         assert res1.status_code == 200
         
-        # Client B immediately receives HIGH update
         msg_high = ws_b.receive_json()
         assert msg_high["event"] == "QA_MODE_UPDATED"
         assert msg_high["enabled"] is True
@@ -159,7 +169,6 @@ def test_multi_client_qa_broadcast():
         res2 = client.post("/api/v1/qa/state", json={"enabled": True, "scenario": "MEDIUM"})
         assert res2.status_code == 200
 
-        # Client B immediately receives MEDIUM update
         msg_med = ws_b.receive_json()
         assert msg_med["event"] == "QA_MODE_UPDATED"
         assert msg_med["enabled"] is True
@@ -171,7 +180,19 @@ def test_multi_client_qa_broadcast():
         res3 = client.post("/api/v1/qa/state", json={"enabled": False, "scenario": "LOW"})
         assert res3.status_code == 200
 
-        # Client B immediately receives OFF update
         msg_off = ws_b.receive_json()
         assert msg_off["event"] == "QA_MODE_UPDATED"
         assert msg_off["enabled"] is False
+
+def test_real_detector_when_qa_off():
+    """Verify when QA is OFF, payload is NOT marked as simulated."""
+    qa_service.set_state(False, "LOW")
+    assert qa_service.is_enabled() is False
+
+def test_qa_override_when_enabled():
+    """Verify when QA is ON, simulated payload produces stable values."""
+    qa_service.set_state(True, "HIGH")
+    payload = qa_service.get_next_simulated_payload()
+    assert payload["simulated"] is True
+    assert payload["label"] == "SYNTHETIC"
+    assert "SIMULATED" in payload["verdict"]
