@@ -63,6 +63,9 @@ async def websocket_analysis_endpoint(websocket: WebSocket, analysis_id: str):
     Processes real audio in memory buffers without persisting raw audio.
     """
     await manager.connect(analysis_id, websocket)
+    client_host = websocket.client.host if websocket.client else 'unknown'
+    print(f"[WS-CONNECT] analysis_id={analysis_id} client={client_host}")
+    print(f"[WS-STARTED] analysis_id={analysis_id}")
     print(f"[S2-WS-CONNECT] call_id={analysis_id} timestamp={time.time()}")
     
     # Broadcast ANALYSIS_STARTED
@@ -86,6 +89,7 @@ async def websocket_analysis_endpoint(websocket: WebSocket, analysis_id: str):
                 audio_bytes = message["bytes"]
                 window_index += 1
                 
+                print(f"[SERVER-WS-RECEIVE] analysis_id={analysis_id} message_type=bytes bytes={len(audio_bytes)}")
                 print(f"[S2-AUDIO-RECEIVED] call_id={analysis_id} window={window_index} bytes={len(audio_bytes)} timestamp={start_pipeline_time}")
                 print(f"[AUDIO-RECEIVED] call_id={analysis_id} bytes={len(audio_bytes)} timestamp={start_pipeline_time}")
 

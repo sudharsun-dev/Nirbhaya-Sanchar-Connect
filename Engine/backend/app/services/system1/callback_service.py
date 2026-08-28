@@ -47,9 +47,10 @@ class CallbackService:
             "timestamp": datetime.utcnow().isoformat()
         }
 
+        key_val = str(self.api_key or settings.INTERNAL_API_KEY or "nirbhaya_default_engine_key")
         headers = {
             "Content-Type": "application/json",
-            "X-Nirbhaya-Engine-Key": self.api_key or settings.INTERNAL_API_KEY
+            "X-Nirbhaya-Engine-Key": key_val
         }
 
         try:

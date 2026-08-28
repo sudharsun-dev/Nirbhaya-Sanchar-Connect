@@ -116,6 +116,8 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId }) {
 
     const wsBase = resolveWsBase();
     const wsUrl = `${wsBase}/analysis/${targetId}`;
+    console.info(`[CLIENT-WS] url=${wsUrl}`);
+    console.info(`[CLIENT-WS] state=CONNECTING`);
     console.info(`[SYSTEM 2] Connecting to WebSocket: ${wsUrl} for call_id=${targetId}`);
     setAudioStreamState('CONNECTING');
 
@@ -123,6 +125,7 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId }) {
     wsRef.current = socket;
 
     socket.onopen = () => {
+      console.info(`[CLIENT-WS] state=OPEN`);
       console.info(`[SYSTEM 2] WebSocket connected for session ${targetId}`);
       setAudioStreamState('AUDIO RECEIVING');
 
@@ -156,6 +159,7 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId }) {
             lastLatencyMs: data.processing_latency_ms,
           }));
         } else if (data.event === 'RISK_UPDATED') {
+          console.info(`[UI-RISK-RECEIVED] analysis_id=${targetId} window_index=${data.window_index || 1} synthetic_probability=${data.synthetic_probability} risk_score=${data.risk_score} risk_level=${data.risk_level}`);
           setAudioStreamState('ANALYSIS READY');
           const authScore = data.synthetic_probability != null ? Math.max(0, 100 - data.synthetic_probability) : null;
           setRiskData((prev) => ({
@@ -203,14 +207,16 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId }) {
     };
 
     socket.onerror = (err) => {
+      console.info(`[CLIENT-WS] state=ERROR message=${err?.message || 'WebSocket network error'}`);
       console.warn('[SYSTEM 2] WebSocket connection error', err);
       setAudioStreamState('ERROR');
     };
 
     socket.onclose = (ev) => {
+      console.info(`[CLIENT-WS] state=CLOSED code=${ev.code} reason=${ev.reason || 'normal'}`);
       console.info(`[SYSTEM 2] WebSocket closed (code=${ev.code}) for session ${targetId}`);
       if (wsRef.current === socket) {
-        setAudioStreamState('RECONNECTING');
+        setAudioStreamState('WAITING FOR AUDIO');
       }
     };
   }, []);

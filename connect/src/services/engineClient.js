@@ -90,12 +90,15 @@ export function connectEngineStream(analysisId, onEventCallback) {
   }
 
   const wsUrl = `${ENGINE_WS_BASE}/analysis/${analysisId}`;
+  console.info(`[CLIENT-WS] url=${wsUrl}`);
+  console.info(`[CLIENT-WS] state=CONNECTING`);
   console.info(`[TRACE] WS_URL=${wsUrl} call_id=${analysisId}`);
   console.info(`[S1-WS-CONNECT] call_id=${analysisId} url=${wsUrl}`);
   console.info(`[DEBUG-ENGINE-WS] URL=${wsUrl} call_id=${analysisId}`);
   socket = new WebSocket(wsUrl);
 
   socket.onopen = () => {
+    console.info(`[CLIENT-WS] state=OPEN`);
     console.info(`[TRACE] WS_CONNECTED call_id=${analysisId}`);
     console.info(`[DEBUG-ENGINE-WS] CONNECTED call_id=${analysisId}`);
     console.info(`[ENGINE] websocket=${wsUrl} connected=true`);
@@ -107,6 +110,7 @@ export function connectEngineStream(analysisId, onEventCallback) {
         const queuedBuf = pendingAudioQueue.shift();
         try {
           socket.send(queuedBuf);
+          console.info(`[CLIENT-WS-SEND] analysis_id=${analysisId} binary=true bytes=${queuedBuf.byteLength} flushed=true`);
           console.info(`[TRACE] AUDIO_CHUNK_SENT call_id=${analysisId} flushed=true`);
         } catch (err) {
           console.warn('[SYSTEM 1] Failed to flush queued audio buffer', err);
@@ -135,10 +139,12 @@ export function connectEngineStream(analysisId, onEventCallback) {
   };
 
   socket.onerror = (err) => {
+    console.info(`[CLIENT-WS] state=ERROR message=${err?.message || 'WebSocket network error'}`);
     console.warn('[SYSTEM 1] System 2 Engine WebSocket error', err);
   };
 
   socket.onclose = (event) => {
+    console.info(`[CLIENT-WS] state=CLOSED code=${event.code} reason=${event.reason || 'normal'}`);
     console.info(`[DEBUG-ENGINE-WS] CLOSED code=${event.code} reason=${event.reason || 'normal'}`);
     console.info('[SYSTEM 1] System 2 Engine WebSocket disconnected');
   };
@@ -296,12 +302,14 @@ export function startAudioStreamToEngine(analysisId, mediaStreamTrack, options =
         const speechDetected = rmsEnergy > 0.001;
         const wsReadyState = socket ? (socket.readyState === 1 ? 'OPEN' : socket.readyState) : 'NULL';
 
+        console.info(`[CLIENT-AUDIO] sample_rate=16000 channels=1 samples=${chunkSamples.length} duration_ms=${(samplesPerChunk / targetSampleRate) * 1000} bytes=${wavBuffer.byteLength}`);
         console.info(`[S1-AUDIO-CHUNK] call_id=${analysisId} window=${windowIndex} bytes=${wavBuffer.byteLength} sample_rate=16000 rms=${rmsEnergy.toFixed(4)} speech_detected=${speechDetected}`);
         console.info(`[DEBUG-AUDIO-SEND] call_id=${analysisId} websocket_readyState=${wsReadyState} chunk_number=${windowIndex} byte_length=${wavBuffer.byteLength} sample_rate=16000 rms=${rmsEnergy.toFixed(4)}`);
         console.info(`[AUDIO-TAP] call_id=${analysisId} chunk=${windowIndex} sample_rate=16000 channels=1 bytes=${wavBuffer.byteLength} rms=${rmsEnergy.toFixed(4)} speech_detected=${speechDetected}`);
 
         if (socket && socket.readyState === WebSocket.OPEN) {
           socket.send(wavBuffer);
+          console.info(`[CLIENT-WS-SEND] analysis_id=${analysisId} binary=true bytes=${wavBuffer.byteLength}`);
           console.info(`[S1-WS-SEND] call_id=${analysisId} chunk=${windowIndex} bytes=${wavBuffer.byteLength}`);
           console.info(`[DEBUG-ENGINE-WS] BINARY AUDIO SENT`, { chunk: windowIndex, bytes: wavBuffer.byteLength });
         } else {
