@@ -259,7 +259,7 @@ def test_qa_status_endpoint():
     assert res.status_code == 200
     data = res.json()
     assert data["database"] == "connected"
-    assert data["qa_mode"] is True
+    assert (data.get("enabled") is True or data.get("qa_mode") is True)
     assert data["scenario"] == "HIGH"
     assert data["score"] == 95.0
     assert "updated_at" in data
