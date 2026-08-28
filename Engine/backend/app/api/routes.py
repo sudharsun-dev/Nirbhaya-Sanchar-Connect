@@ -58,10 +58,10 @@ async def get_system_health():
     # Check ASR status
     asr_status = "ONLINE" if (settings.ASR_API_KEY and settings.ASR_API_URL) else "CONFIGURATION_REQUIRED"
 
-    # Check System 1 connection
+    # Check System 1 connection (non-blocking fast check)
     sys1_status = "OFFLINE"
     try:
-        async with httpx.AsyncClient(timeout=1.5) as client:
+        async with httpx.AsyncClient(timeout=0.5) as client:
             resp = await client.get(f"{settings.resolved_system1_base_url}/health")
             if resp.status_code == 200:
                 sys1_status = "ONLINE"
@@ -325,51 +325,63 @@ async def submit_feedback(fb: FeedbackCreate, db: AsyncSession = Depends(get_db)
 async def get_dashboard_stats(db: AsyncSession = Depends(get_db)):
     """
     Returns aggregated metrics for the Security Operations Dashboard.
+    Resilient against database query failures.
     """
-    active_calls_res = await db.execute(select(Call).where(Call.status == "ACTIVE"))
-    active_calls = len(active_calls_res.scalars().all())
+    try:
+        active_calls_res = await db.execute(select(Call).where(Call.status == "ACTIVE"))
+        active_calls = len(active_calls_res.scalars().all())
 
-    total_anal_res = await db.execute(select(AnalysisSession))
-    total_analyzed = len(total_anal_res.scalars().all())
+        total_anal_res = await db.execute(select(AnalysisSession))
+        total_analyzed = len(total_anal_res.scalars().all())
 
-    high_risk_res = await db.execute(select(RiskScore).where(RiskScore.risk_level == "HIGH"))
-    high_risk_calls = len(high_risk_res.scalars().all())
+        high_risk_res = await db.execute(select(RiskScore).where(RiskScore.risk_level == "HIGH"))
+        high_risk_calls = len(high_risk_res.scalars().all())
 
-    pending_ver_res = await db.execute(select(VerificationRequest).where(VerificationRequest.status == "PENDING"))
-    pending_ver = len(pending_ver_res.scalars().all())
+        pending_ver_res = await db.execute(select(VerificationRequest).where(VerificationRequest.status == "PENDING"))
+        pending_ver = len(pending_ver_res.scalars().all())
 
-    latest_calls_res = await db.execute(
-        select(Call).order_by(Call.created_at.desc()).limit(10)
-    )
-    calls_list = latest_calls_res.scalars().all()
-
-    recent_table = []
-    for c in calls_list:
-        rs_res = await db.execute(
-            select(RiskScore).join(AnalysisSession, RiskScore.analysis_id == AnalysisSession.id).where(AnalysisSession.call_id == c.id).order_by(RiskScore.timestamp.desc())
+        latest_calls_res = await db.execute(
+            select(Call).order_by(Call.created_at.desc()).limit(10)
         )
-        rs = rs_res.scalars().first()
-        created_str = c.created_at.isoformat() if c.created_at else datetime.utcnow().isoformat()
-        recent_table.append({
-            "call_id": c.id,
-            "caller_id": c.caller_id,
-            "receiver_id": c.receiver_id,
-            "created_at": created_str,
-            "status": c.status,
-            "synthetic_prob": rs.synthetic_probability if rs else None,
-            "risk_score": rs.risk_score if rs else 0.0,
-            "risk_level": rs.risk_level if rs else "LOW",
-            "recommended_action": "HOLD" if (rs and rs.risk_level == "HIGH") else "ALLOW",
-            "reasons": rs.reasons if rs else []
-        })
+        calls_list = latest_calls_res.scalars().all()
 
-    return {
-        "active_calls": active_calls,
-        "calls_analyzed": total_analyzed,
-        "high_risk_calls": high_risk_calls,
-        "pending_verifications": pending_ver,
-        "recent_calls": recent_table
-    }
+        recent_table = []
+        for c in calls_list:
+            rs_res = await db.execute(
+                select(RiskScore).join(AnalysisSession, RiskScore.analysis_id == AnalysisSession.id).where(AnalysisSession.call_id == c.id).order_by(RiskScore.timestamp.desc())
+            )
+            rs = rs_res.scalars().first()
+            created_str = c.created_at.isoformat() if c.created_at else datetime.utcnow().isoformat()
+            recent_table.append({
+                "call_id": c.id,
+                "caller_id": c.caller_id,
+                "receiver_id": c.receiver_id,
+                "created_at": created_str,
+                "status": c.status,
+                "synthetic_prob": rs.synthetic_probability if rs else None,
+                "risk_score": rs.risk_score if rs else 0.0,
+                "risk_level": rs.risk_level if rs else "LOW",
+                "recommended_action": "HOLD" if (rs and rs.risk_level == "HIGH") else "ALLOW",
+                "reasons": rs.reasons if rs else []
+            })
+
+        return {
+            "active_calls": active_calls,
+            "calls_analyzed": total_analyzed,
+            "high_risk_calls": high_risk_calls,
+            "pending_verifications": pending_ver,
+            "recent_calls": recent_table
+        }
+    except Exception as db_err:
+        print(f"[DASHBOARD-STATS-ERROR] error={db_err}")
+        return {
+            "active_calls": 0,
+            "calls_analyzed": 0,
+            "high_risk_calls": 0,
+            "pending_verifications": 0,
+            "recent_calls": [],
+            "error": str(db_err)
+        }
 
 @router.get("/audit/logs")
 async def get_audit_logs(limit: int = 50, db: AsyncSession = Depends(get_db)):
