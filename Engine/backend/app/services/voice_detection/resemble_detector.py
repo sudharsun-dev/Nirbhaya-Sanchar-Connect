@@ -13,11 +13,12 @@ class ResembleStreamSession:
     State container for an active Resemble AI streaming detection session.
     Maintains one persistent WebSocket stream per active call_id.
     """
-    def __init__(self, call_id: str, ws: websockets.WebSocketClientProtocol):
+    def __init__(self, call_id: str, ws: Any):
         self.call_id = call_id
         self.ws = ws
         self.is_connected = True
         self.ready_event = asyncio.Event()
+        self.result_updated = asyncio.Event()
         self.chunks_sent = 0
         self.latest_result: Dict[str, Any] = {
             "available": True,
@@ -89,7 +90,7 @@ class ResembleStreamingDetector:
                 print(f"[RESEMBLE-CONNECT] call_id={call_id}")
                 ws = await websockets.connect(
                     self.stream_url,
-                    extra_headers=headers,
+                    additional_headers=headers,
                     ping_interval=20,
                     ping_timeout=20,
                     close_timeout=5
@@ -107,8 +108,9 @@ class ResembleStreamingDetector:
 
                 print(f"[RESEMBLE-READY] call_id={call_id}")
                 return session
-            except websockets.exceptions.InvalidStatusCode as status_err:
-                print(f"[RESEMBLE-ERROR] call_id={call_id} HTTP_{status_err.status_code}: {status_err}")
+            except (websockets.exceptions.InvalidStatus, getattr(websockets.exceptions, 'InvalidStatusCode', Exception)) as status_err:
+                status_code = getattr(status_err, 'status_code', getattr(getattr(status_err, 'response', None), 'status_code', 'UNKNOWN'))
+                print(f"[RESEMBLE-ERROR] call_id={call_id} HTTP_{status_code}: {status_err}")
                 return None
             except Exception as e:
                 print(f"[RESEMBLE-ERROR] call_id={call_id} Connection failed: {e}")
@@ -156,13 +158,21 @@ class ResembleStreamingDetector:
                 except asyncio.TimeoutError:
                     session.ready_event.set()
 
+            # Clear event so we wait for the NEXT Resemble result
+            session.result_updated.clear()
+
             print(f"[RESEMBLE-SEND] call_id={call_id} window={window_index} bytes={len(audio_bytes)}")
             await session.ws.send(audio_bytes)
             session.chunks_sent += 1
-            # Give receiver event loop a tiny yield to process any inbound frame
-            await asyncio.sleep(0.005)
+
+            # Wait for the Resemble listener to receive a real response (up to 5s)
+            try:
+                await asyncio.wait_for(session.result_updated.wait(), timeout=5.0)
+            except asyncio.TimeoutError:
+                print(f"[RESEMBLE-TIMEOUT] call_id={call_id} window={window_index} no response in 5s")
+
             res = dict(session.latest_result)
-            print(f"[RESEMBLE-RESULT] call_id={call_id} window={window_index} label={res.get('label')} score={res.get('aggregated_score')}")
+            print(f"[RESEMBLE-RESULT] call_id={call_id} window={window_index} status={res.get('status')} label={res.get('label')} score={res.get('aggregated_score')}")
             return res
         except Exception as send_err:
             print(f"[RESEMBLE-ERROR] call_id={call_id} send_failed: {send_err}")
@@ -203,6 +213,7 @@ class ResembleStreamingDetector:
                         session.error = str(err_msg)
                         session.latest_result["status"] = "ERROR"
                         session.latest_result["detail"] = str(err_msg)
+                        session.result_updated.set()
                         continue
 
                     label = data.get("label")  # "real", "fake", or None
@@ -232,6 +243,7 @@ class ResembleStreamingDetector:
                             "raw": data,
                             "last_updated": time.time()
                         }
+                        session.result_updated.set()
                         continue
 
                     # Score Normalization:
@@ -262,6 +274,7 @@ class ResembleStreamingDetector:
                         "raw": data,
                         "last_updated": time.time()
                     }
+                    session.result_updated.set()
 
                     print(f"[RESEMBLE-CHUNK] call_id={session.call_id} label={norm_label} score={eff_score} synthetic_probability={synth_prob}% consistency={consistency}")
                 except json.JSONDecodeError as json_err:
@@ -269,10 +282,12 @@ class ResembleStreamingDetector:
         except websockets.ConnectionClosed as cc:
             print(f"[RESEMBLE-CLOSED] call_id={session.call_id} code={cc.code} reason={cc.reason}")
             session.is_connected = False
+            session.result_updated.set()
         except Exception as e:
             print(f"[RESEMBLE-ERROR] call_id={session.call_id} receiver_error: {e}")
             session.is_connected = False
             session.error = str(e)
+            session.result_updated.set()
 
     async def close_stream(self, call_id: str) -> Optional[dict]:
         """
