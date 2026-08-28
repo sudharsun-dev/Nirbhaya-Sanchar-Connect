@@ -9,12 +9,26 @@ import PoliciesConsole from './components/PoliciesConsole';
 import AuditLogConsole from './components/AuditLogConsole';
 import SystemHealth from './components/SystemHealth';
 import SettingsKeyDocs from './components/SettingsKeyDocs';
-import { fetchHealth } from './services/api';
+import { fetchHealth, fetchQAState, WS_BASE } from './services/api';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [healthStatus, setHealthStatus] = useState(null);
   const [selectedCallId, setSelectedCallId] = useState(null);
+  
+  // Persistent Global QA State at App root (Survives all tab navigation)
+  const [qaState, setQaState] = useState({
+    enabled: false,
+    scenario: 'LOW',
+    score: 15.0,
+    authenticity: 85.0,
+    confidence: 95.0,
+    verdict: 'AUTHENTIC',
+    risk_level: 'LOW',
+    recommended_action: 'CONTINUE',
+    source: 'QA_DATABASE',
+  });
+
   const [whyThisScoreModal, setWhyThisScoreModal] = useState({
     isOpen: false,
     riskData: null,
@@ -22,6 +36,7 @@ export default function App() {
     callId: null
   });
 
+  // Health check polling
   useEffect(() => {
     async function loadHealth() {
       try {
@@ -34,6 +49,64 @@ export default function App() {
     loadHealth();
     const interval = setInterval(loadHealth, 10000);
     return () => clearInterval(interval);
+  }, []);
+
+  // Global QA State Synchronization at App Root
+  useEffect(() => {
+    let isMounted = true;
+
+    const syncQAState = async () => {
+      try {
+        const state = await fetchQAState();
+        if (isMounted && state && state.enabled !== undefined) {
+          setQaState(state);
+        }
+      } catch (err) {
+        console.warn('[QA-APP-SYNC] Sync warning:', err);
+      }
+    };
+
+    // Initial database load
+    syncQAState();
+
+    // 2.5s database polling fallback (guarantees multi-device sync across all tabs)
+    const qaTimer = setInterval(syncQAState, 2500);
+
+    // Persistent WebSocket sync across all page views
+    let ws = null;
+    try {
+      const wsUrl = `${WS_BASE}/events`;
+      ws = new WebSocket(wsUrl);
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.event === 'QA_MODE_UPDATED' || data.type === 'QA_MODE_UPDATED') {
+            if (isMounted) {
+              setQaState((prev) => ({
+                ...prev,
+                enabled: Boolean(data.enabled),
+                scenario: data.scenario || prev.scenario || 'LOW',
+                score: data.score ?? (data.scenario === 'HIGH' ? 95.0 : data.scenario === 'MEDIUM' ? 55.0 : 15.0),
+                authenticity: data.authenticity ?? (data.scenario === 'HIGH' ? 5.0 : data.scenario === 'MEDIUM' ? 45.0 : 85.0),
+                confidence: data.confidence ?? 95.0,
+                verdict: data.verdict ?? (data.scenario === 'LOW' ? 'AUTHENTIC' : 'SYNTHETIC'),
+                risk_level: data.risk_level ?? data.scenario,
+                recommended_action: data.recommended_action ?? (data.scenario === 'HIGH' ? 'HOLD' : data.scenario === 'MEDIUM' ? 'VERIFY' : 'CONTINUE'),
+                source: 'QA_DATABASE',
+              }));
+            }
+          }
+        } catch (_) {}
+      };
+    } catch (_) {}
+
+    return () => {
+      isMounted = false;
+      clearInterval(qaTimer);
+      if (ws) {
+        try { ws.close(); } catch (_) {}
+      }
+    };
   }, []);
 
   const handleSelectCall = (callId) => {
@@ -69,6 +142,7 @@ export default function App() {
           <LiveCallUI
             initialCallId={selectedCallId}
             onOpenWhyThisScore={handleOpenWhyThisScore}
+            globalQAState={qaState}
           />
         )}
         {activeTab === 'transaction' && <TransactionSecurity />}
@@ -76,7 +150,12 @@ export default function App() {
         {activeTab === 'policies' && <PoliciesConsole />}
         {activeTab === 'audit' && <AuditLogConsole />}
         {activeTab === 'health' && <SystemHealth healthStatus={healthStatus} />}
-        {activeTab === 'settings' && <SettingsKeyDocs />}
+        {activeTab === 'settings' && (
+          <SettingsKeyDocs
+            globalQAState={qaState}
+            onQAStateChange={setQaState}
+          />
+        )}
       </main>
 
       {/* Why This Score Modal */}

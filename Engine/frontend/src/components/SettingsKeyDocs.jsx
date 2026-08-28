@@ -2,26 +2,40 @@ import React, { useState, useEffect } from 'react';
 import { Key, Shield, FileCode, Lock, BookOpen, Sliders, CheckCircle2, AlertTriangle, Radio } from 'lucide-react';
 import { fetchQAState, updateQAState } from '../services/api';
 
-export default function SettingsKeyDocs() {
-  const [qaState, setQaState] = useState({ enabled: false, scenario: 'LOW' });
+export default function SettingsKeyDocs({ globalQAState, onQAStateChange }) {
+  const [localQA, setLocalQA] = useState(globalQAState || { enabled: false, scenario: 'LOW' });
   const [saving, setSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
 
   useEffect(() => {
+    if (globalQAState) {
+      setLocalQA(globalQAState);
+    }
+  }, [globalQAState]);
+
+  useEffect(() => {
     fetchQAState().then((res) => {
       if (res && res.enabled !== undefined) {
-        setQaState(res);
+        setLocalQA(res);
+        if (onQAStateChange) onQAStateChange(res);
       }
     });
-  }, []);
+  }, [onQAStateChange]);
+
+  const qaState = globalQAState || localQA;
 
   const handleToggle = async (nextEnabled) => {
     setSaving(true);
-    setQaState((prev) => ({ ...prev, enabled: nextEnabled }));
+    const updated = { ...qaState, enabled: nextEnabled };
+    setLocalQA(updated);
+    if (onQAStateChange) onQAStateChange(updated);
     console.info(`[QA-CLICK] control=QA_TOGGLE previous_enabled=${qaState.enabled} previous_scenario=${qaState.scenario}`);
     console.info(`[QA-STATE] enabled=${nextEnabled} scenario=${qaState.scenario}`);
     try {
-      await updateQAState(nextEnabled, qaState.scenario);
+      const res = await updateQAState(nextEnabled, qaState.scenario);
+      if (res && onQAStateChange) {
+        onQAStateChange(res.qa_state || res);
+      }
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 2000);
     } catch (err) {
@@ -33,11 +47,16 @@ export default function SettingsKeyDocs() {
 
   const handleScenarioChange = async (scenario) => {
     setSaving(true);
-    setQaState((prev) => ({ ...prev, enabled: true, scenario }));
+    const updated = { ...qaState, enabled: true, scenario };
+    setLocalQA(updated);
+    if (onQAStateChange) onQAStateChange(updated);
     console.info(`[QA-CLICK] control=${scenario} previous_enabled=${qaState.enabled} previous_scenario=${qaState.scenario}`);
     console.info(`[QA-STATE] enabled=true scenario=${scenario}`);
     try {
-      await updateQAState(true, scenario);
+      const res = await updateQAState(true, scenario);
+      if (res && onQAStateChange) {
+        onQAStateChange(res.qa_state || res);
+      }
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 2000);
     } catch (err) {

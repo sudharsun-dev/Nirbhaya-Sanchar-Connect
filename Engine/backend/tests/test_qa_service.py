@@ -114,6 +114,33 @@ def test_qa_persistence():
     assert data["score"] == 55.0
     assert data["authenticity"] == 45.0
 
+def test_qa_state_survives_navigation_and_remount():
+    """
+    Verify simulating frontend page navigation:
+    1. Client A sets ON + HIGH
+    2. Repeated GETs simulating navigation (Dashboard -> Live Analysis -> Policies -> Settings)
+    3. State remains persistently enabled=True and scenario=HIGH.
+    """
+    client = TestClient(app)
+    client.post("/api/v1/qa/state", json={"enabled": True, "scenario": "HIGH"})
+
+    # Simulate navigating to Dashboard
+    res1 = client.get("/api/v1/qa/state")
+    assert res1.json()["enabled"] is True
+    assert res1.json()["scenario"] == "HIGH"
+    assert res1.json()["score"] == 95.0
+
+    # Simulate navigating to Live Analysis
+    res2 = client.get("/api/v1/qa/state")
+    assert res2.json()["enabled"] is True
+    assert res2.json()["scenario"] == "HIGH"
+    assert res2.json()["score"] == 95.0
+
+    # Simulate navigating to Policies
+    res3 = client.get("/api/v1/qa/state")
+    assert res3.json()["enabled"] is True
+    assert res3.json()["scenario"] == "HIGH"
+
 def test_qa_high_exact_value():
     """Verify HIGH scenario always returns exact 95.0 without random variance."""
     qa_service.set_state(True, "HIGH")

@@ -82,7 +82,7 @@ function encodeWav(samples, sampleRate = 16000) {
   return buffer;
 }
 
-export default function LiveCallUI({ onOpenWhyThisScore, initialCallId }) {
+export default function LiveCallUI({ onOpenWhyThisScore, initialCallId, globalQAState }) {
   const [callState, setCallState] = useState({
     callId: initialCallId || `nirbhaya-call-${Date.now().toString(36)}`,
     callerName: 'Official Caller',
@@ -99,37 +99,8 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId }) {
   const [rmsVolume, setRmsVolume] = useState(0);
   const [analysisId, setAnalysisId] = useState(initialCallId || null);
 
-  // Global QA Simulation Test State (Synchronized with Backend & All Connected Clients)
-  const [qaState, setQaState] = useState({ enabled: false, scenario: 'HIGH' });
-
-  // Real AI Outputs from backend voice authenticity streaming detector
-  const [riskData, setRiskData] = useState({
-    riskScore: null,
-    riskLevel: null, // null until real risk received
-    overallConfidence: null,
-    syntheticProbability: null,
-    voiceAuthenticity: null,
-    resemble: {
-      available: false,
-      status: 'DISCONNECTED',
-      label: null,
-      syntheticProbability: null,
-      authenticityScore: null,
-      confidence: null,
-      consistency: null,
-    },
-    speakerSimilarity: null,
-    audioQuality: null,
-    contextScore: null,
-    transactionScore: null,
-    behaviorScore: null,
-    reasons: [],
-    recommendedAction: null,
-    verificationRequired: false,
-    windowsAnalyzed: 0,
-    lastLatencyMs: null,
-    simulated: false,
-  });
+  // Global QA Simulation Test State (Synchronized with Root App & Backend Database)
+  const [qaState, setQaState] = useState(globalQAState || { enabled: false, scenario: 'HIGH' });
 
   const getSimulatedDataForScenario = useCallback((scenario) => {
     if (scenario === 'HIGH') {
@@ -167,6 +138,61 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId }) {
       };
     }
   }, []);
+
+  const initialSim = (globalQAState?.enabled || qaState.enabled)
+    ? getSimulatedDataForScenario(globalQAState?.scenario || qaState.scenario || 'HIGH')
+    : null;
+
+  // Real AI Outputs from backend voice authenticity streaming detector
+  const [riskData, setRiskData] = useState({
+    riskScore: initialSim ? initialSim.risk_score : null,
+    riskLevel: initialSim ? initialSim.risk_level : null,
+    overallConfidence: initialSim ? initialSim.confidence : null,
+    syntheticProbability: initialSim ? initialSim.synthetic_probability : null,
+    voiceAuthenticity: initialSim ? initialSim.authenticity_score : null,
+    resemble: {
+      available: false,
+      status: 'DISCONNECTED',
+      label: null,
+      syntheticProbability: null,
+      authenticityScore: null,
+      confidence: null,
+      consistency: null,
+    },
+    speakerSimilarity: null,
+    audioQuality: null,
+    contextScore: null,
+    transactionScore: null,
+    behaviorScore: null,
+    reasons: initialSim ? initialSim.reasons : [],
+    recommendedAction: initialSim ? initialSim.action : null,
+    verificationRequired: false,
+    windowsAnalyzed: 0,
+    lastLatencyMs: null,
+    simulated: Boolean(initialSim),
+  });
+
+  // Keep state in sync with globalQAState prop from App root
+  useEffect(() => {
+    if (globalQAState) {
+      setQaState(globalQAState);
+      if (globalQAState.enabled) {
+        const simData = getSimulatedDataForScenario(globalQAState.scenario || 'HIGH');
+        setRiskData((prev) => ({
+          ...prev,
+          riskScore: simData.risk_score,
+          riskLevel: simData.risk_level,
+          syntheticProbability: simData.synthetic_probability,
+          voiceAuthenticity: simData.authenticity_score,
+          recommendedAction: simData.action,
+          reasons: simData.reasons,
+          simulated: true,
+        }));
+      } else {
+        setRiskData((prev) => (prev.simulated ? { ...prev, simulated: false } : prev));
+      }
+    }
+  }, [globalQAState, getSimulatedDataForScenario]);
 
   // Periodic & initial fetch of global QA state (resilient fallback alongside WebSocket)
   useEffect(() => {

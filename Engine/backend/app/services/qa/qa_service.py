@@ -40,7 +40,7 @@ FIXED_QA_DATABASE_VALUES = {
 class GlobalQAService:
     """
     Database-Backed Global QA Control Service for Nirbhaya Sanchar System 2.
-    The database (qa_control table) is the SINGLE SOURCE OF TRUTH.
+    The database (qa_control table) is the AUTHORITATIVE SINGLE SOURCE OF TRUTH.
     Provides strictly deterministic, fixed database test values:
       LOW:    score = 15.0, authenticity = 85.0, confidence = 95.0, verdict = AUTHENTIC, risk_level = LOW, action = CONTINUE
       MEDIUM: score = 55.0, authenticity = 45.0, confidence = 95.0, verdict = SYNTHETIC, risk_level = MEDIUM, action = VERIFY
@@ -73,7 +73,7 @@ class GlobalQAService:
             self._scenario = scenario
         self._updated_at = datetime.now(timezone.utc).isoformat()
 
-        # Asynchronously persist to database if event loop is active
+        # Try to asynchronously persist to database if event loop is running
         try:
             loop = asyncio.get_event_loop()
             if loop.is_running():
@@ -86,6 +86,8 @@ class GlobalQAService:
     async def load_from_db(self) -> Dict[str, Any]:
         """
         Loads the authoritative persistent QA state from the database.
+        If no record exists, creates the default row (enabled=False, scenario=LOW).
+        NEVER resets enabled state if the row exists in database.
         """
         try:
             from app.database.session import AsyncSessionLocal
@@ -98,12 +100,33 @@ class GlobalQAService:
                 )
                 record = result.scalars().first()
                 if record:
-                    self._enabled = record.enabled
+                    self._enabled = bool(record.enabled)
                     self._scenario = record.scenario if record.scenario in ["LOW", "MEDIUM", "HIGH"] else "LOW"
                     if record.updated_at:
                         self._updated_at = record.updated_at.isoformat()
                     logger.info(f"[QA-DB-LOAD] Authoritative DB QA state loaded: enabled={self._enabled} scenario={self._scenario} score={record.score}")
-                    print(f"[QA-DB-LOAD] Authoritative DB QA state loaded: enabled={self._enabled} scenario={self._scenario} score={record.score}")
+                else:
+                    # Initialize default record only once
+                    spec = FIXED_QA_DATABASE_VALUES["LOW"]
+                    now = datetime.now(timezone.utc)
+                    new_record = QAControlRecord(
+                        id="global_qa",
+                        enabled=False,
+                        scenario="LOW",
+                        score=spec["score"],
+                        authenticity=spec["authenticity"],
+                        confidence=spec["confidence"],
+                        verdict=spec["verdict"],
+                        risk_level=spec["risk_level"],
+                        recommended_action=spec["recommended_action"],
+                        updated_at=now
+                    )
+                    session.add(new_record)
+                    await session.commit()
+                    self._enabled = False
+                    self._scenario = "LOW"
+                    self._updated_at = now.isoformat()
+                    logger.info("[QA-DB-INIT] Initialized new qa_control record in database: enabled=False scenario=LOW")
         except Exception as e:
             logger.warning(f"[QA-DB-LOAD] Notice: Could not load QA state from DB: {e}")
         return self.get_state()
@@ -118,13 +141,13 @@ class GlobalQAService:
             from sqlalchemy.future import select
 
             spec = FIXED_QA_DATABASE_VALUES.get(scenario, FIXED_QA_DATABASE_VALUES["LOW"])
+            now = datetime.now(timezone.utc)
 
             async with AsyncSessionLocal() as session:
                 result = await session.execute(
                     select(QAControlRecord).where(QAControlRecord.id == "global_qa")
                 )
                 record = result.scalars().first()
-                now = datetime.now(timezone.utc)
                 if record:
                     record.enabled = enabled
                     record.scenario = scenario
@@ -150,7 +173,10 @@ class GlobalQAService:
                     )
                     session.add(record)
                 await session.commit()
-                logger.info(f"[QA-DB-SAVE] Successfully committed QA state to DB: enabled={enabled} scenario={scenario} score={spec['score']}")
+                self._enabled = bool(enabled)
+                self._scenario = scenario
+                self._updated_at = now.isoformat()
+                logger.info(f"[QA-DB-SAVE] Committed QA state to DB: enabled={enabled} scenario={scenario} score={spec['score']}")
         except Exception as e:
             logger.warning(f"[QA-DB-SAVE] Warning persisting QA state to DB: {e}")
 

@@ -418,8 +418,9 @@ class QAModeUpdateRequest(BaseModel):
 async def get_qa_state():
     """
     Retrieves the authoritative database-backed global QA test state.
-    Synchronized across all connected browsers and laptops.
+    Always reads from the database.
     """
+    await qa_service.load_from_db()
     return qa_service.get_state()
 
 @router.post("/qa/state")
