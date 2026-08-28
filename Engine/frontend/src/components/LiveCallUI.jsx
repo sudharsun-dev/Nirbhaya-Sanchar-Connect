@@ -168,10 +168,13 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId }) {
     }
   }, []);
 
-  // Fetch initial global QA state on mount
+  // Periodic & initial fetch of global QA state (resilient fallback alongside WebSocket)
   useEffect(() => {
-    fetchQAState().then((s) => {
-      if (s && s.enabled !== undefined) {
+    let mounted = true;
+    const checkQA = async () => {
+      try {
+        const s = await fetchQAState();
+        if (!mounted || !s || s.enabled === undefined) return;
         setQaState(s);
         if (s.enabled) {
           const simData = getSimulatedDataForScenario(s.scenario || 'HIGH');
@@ -185,9 +188,20 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId }) {
             reasons: simData.reasons,
             simulated: true,
           }));
+        } else {
+          setRiskData((prev) => (prev.simulated ? { ...prev, simulated: false } : prev));
         }
+      } catch (err) {
+        console.warn('[QA-FETCH] Warning fetching QA state:', err);
       }
-    });
+    };
+
+    checkQA();
+    const interval = setInterval(checkQA, 2500);
+    return () => {
+      mounted = false;
+      clearInterval(interval);
+    };
   }, [getSimulatedDataForScenario]);
 
   // Diagnostic Pipeline tracker
@@ -341,12 +355,12 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId }) {
           if (data.risk_level === 'HIGH') {
             setShowAlertModal(true);
           }
-        } else if (data.event === 'QA_MODE_UPDATED') {
+        } else if (data.event === 'QA_MODE_UPDATED' || data.type === 'QA_MODE_UPDATED') {
           console.info(`[QA-RECEIVE]\nenabled=${Boolean(data.enabled)}\nscenario=${data.scenario || 'HIGH'}`);
           console.info(`[QA-UI]\nenabled=${Boolean(data.enabled)}\nscenario=${data.scenario || 'HIGH'}`);
           setQaState({ enabled: Boolean(data.enabled), scenario: data.scenario || 'HIGH' });
-          if (data.enabled && data.simulated_data) {
-            const sim = data.simulated_data;
+          if (data.enabled) {
+            const sim = data.simulated_data || getSimulatedDataForScenario(data.scenario || 'HIGH');
             setRiskData((prev) => ({
               ...prev,
               riskScore: sim.risk_score,
@@ -360,7 +374,7 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId }) {
             if (sim.risk_level === 'HIGH') {
               setShowAlertModal(true);
             }
-          } else if (!data.enabled) {
+          } else {
             setRiskData((prev) => ({ ...prev, simulated: false }));
           }
         } else if (data.event === 'POLICY_UPDATED') {
@@ -392,7 +406,14 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId }) {
     };
   }, []);
 
-  // Auto-subscribe to initialCallId or active call from backend (only when not actively streaming locally)
+  useEffect(() => {
+    const targetId = initialCallId || callState.callId;
+    if (!wsRef.current) {
+      connectWebSocket(targetId);
+    }
+  }, [connectWebSocket, initialCallId, callState.callId]);
+
+  // Auto-subscribe to active call from backend (only when not actively streaming locally)
   useEffect(() => {
     let active = true;
 
@@ -403,7 +424,7 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId }) {
         const calls = stats.recent_calls || [];
         setAvailableCalls(calls);
 
-        // If currently streaming locally or analyzing, do not overwrite active call or reset telemetry!
+        // If currently streaming locally, do not overwrite active session
         if (isLocallyStreamingRef.current) {
           return;
         }
@@ -456,13 +477,13 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId }) {
             connectWebSocket(activeCall.call_id);
           }
         }
-      } catch (e) {
-        console.warn('[SYSTEM 2] Failed to sync active calls', e);
+      } catch (err) {
+        console.warn('[SYSTEM 2] Error syncing active calls:', err);
       }
     }
 
     syncActiveCalls();
-    const interval = setInterval(syncActiveCalls, 3000);
+    const interval = setInterval(syncActiveCalls, 5000);
 
     return () => {
       active = false;

@@ -1,7 +1,5 @@
-// System 1 Integration Client for Nirbhaya Sanchar Engine (System 2)
-
-const defaultHttp = import.meta.env.DEV ? 'http://localhost:8000/api/v1' : 'https://nirbhaya-sanchar-connect.onrender.com/api/v1';
-const defaultWs = import.meta.env.DEV ? 'ws://localhost:8000/ws' : 'wss://nirbhaya-sanchar-connect.onrender.com/ws';
+const defaultHttp = import.meta.env.DEV ? 'http://localhost:8000/api/v1' : 'https://nirbhaya-sanchar-connect-1.onrender.com/api/v1';
+const defaultWs = import.meta.env.DEV ? 'ws://localhost:8000/ws' : 'wss://nirbhaya-sanchar-connect-1.onrender.com/ws';
 
 function resolveEngineHttp() {
   const raw = (import.meta.env.VITE_ENGINE_HTTP_URL || '').replace(/\/$/, '');
@@ -124,11 +122,14 @@ export function connectEngineStream(analysisId, onEventCallback) {
   socket.onmessage = (event) => {
     try {
       const data = JSON.parse(event.data);
-      console.info(`[S1-TELEMETRY-RECEIVED] call_id=${analysisId} event=${data.event}`, data);
-      console.info(`[DEBUG-ENGINE-WS] MESSAGE RECEIVED`, { event: data.event, payload: data });
-      if (data.event === 'ANALYSIS_STARTED') {
+      const eventType = data.event || data.type;
+      console.info(`[S1-TELEMETRY-RECEIVED] call_id=${analysisId} event=${eventType}`, data);
+      console.info(`[DEBUG-ENGINE-WS] MESSAGE RECEIVED`, { event: eventType, payload: data });
+      if (eventType === 'ANALYSIS_STARTED') {
         console.info(`[TRACE-WS-EVENT] event=ANALYSIS_STARTED analysis_id=${analysisId}`);
-      } else if (data.event === 'RISK_UPDATED') {
+      } else if (eventType === 'QA_MODE_UPDATED') {
+        console.info(`[TRACE-WS-EVENT] event=QA_MODE_UPDATED enabled=${data.enabled} scenario=${data.scenario}`);
+      } else if (eventType === 'RISK_UPDATED') {
         console.info(`[TRACE-UI-RISK-RECEIVE] call_id=${analysisId} window_index=${data.window_index || 1} synthetic_probability=${data.synthetic_probability} authenticity_score=${data.authenticity_score} confidence=${data.overall_confidence} risk_score=${data.risk_score} risk_level=${data.risk_level} recommended_action=${data.recommended_action}`);
         console.info(`[TRACE] RISK_UPDATED call_id=${analysisId} risk=${data.risk_score} synthetic=${data.synthetic_probability}% level=${data.risk_level} action=${data.recommended_action}`);
         console.info(`[RISK] score=${data.risk_score} level=${data.risk_level} action=${data.recommended_action}`);

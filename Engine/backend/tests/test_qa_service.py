@@ -127,3 +127,51 @@ def test_qa_overrides_display_when_enabled():
     assert payload["simulated"] is True
     assert payload["label"] == "SYNTHETIC"
     assert "SIMULATED" in payload["verdict"]
+
+def test_multi_client_qa_broadcast():
+    """
+    Verify multi-device real-time sync:
+    Client B receives live QA_MODE_UPDATED whenever Client A updates state via POST.
+    """
+    client = TestClient(app)
+    with client.websocket_connect("/ws/analysis/client_b_session") as ws_b:
+        # Client B receives initial state on connect
+        init_msg = ws_b.receive_json()
+        assert init_msg["event"] == "QA_MODE_UPDATED"
+
+        # Client B receives ANALYSIS_STARTED on connect
+        start_msg = ws_b.receive_json()
+        assert start_msg["event"] == "ANALYSIS_STARTED"
+
+        # Client A changes to HIGH
+        res1 = client.post("/api/v1/qa/state", json={"enabled": True, "scenario": "HIGH"})
+        assert res1.status_code == 200
+        
+        # Client B immediately receives HIGH update
+        msg_high = ws_b.receive_json()
+        assert msg_high["event"] == "QA_MODE_UPDATED"
+        assert msg_high["enabled"] is True
+        assert msg_high["scenario"] == "HIGH"
+        assert msg_high["simulated_data"]["risk_level"] == "HIGH"
+        assert 93.0 <= msg_high["simulated_data"]["risk_score"] <= 98.0
+
+        # Client A changes to MEDIUM
+        res2 = client.post("/api/v1/qa/state", json={"enabled": True, "scenario": "MEDIUM"})
+        assert res2.status_code == 200
+
+        # Client B immediately receives MEDIUM update
+        msg_med = ws_b.receive_json()
+        assert msg_med["event"] == "QA_MODE_UPDATED"
+        assert msg_med["enabled"] is True
+        assert msg_med["scenario"] == "MEDIUM"
+        assert msg_med["simulated_data"]["risk_level"] == "MEDIUM"
+        assert 45.0 <= msg_med["simulated_data"]["risk_score"] <= 65.0
+
+        # Client A turns QA OFF
+        res3 = client.post("/api/v1/qa/state", json={"enabled": False, "scenario": "LOW"})
+        assert res3.status_code == 200
+
+        # Client B immediately receives OFF update
+        msg_off = ws_b.receive_json()
+        assert msg_off["event"] == "QA_MODE_UPDATED"
+        assert msg_off["enabled"] is False

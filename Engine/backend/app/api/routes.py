@@ -434,6 +434,7 @@ async def set_qa_state(payload: QAModeUpdateRequest):
     # Broadcast to all connected clients
     await manager.broadcast_all({
         "event": "QA_MODE_UPDATED",
+        "type": "QA_MODE_UPDATED",
         "enabled": updated_state["enabled"],
         "scenario": updated_state["scenario"],
         "updated_at": updated_state["updated_at"],

@@ -32,18 +32,22 @@ class ConnectionManager:
     def __init__(self):
         # Maps analysis_id -> set of WebSocket connections
         self.active_connections: Dict[str, Set[WebSocket]] = {}
+        # Set of ALL active connections across the entire backend
+        self.all_connections: Set[WebSocket] = set()
 
     async def connect(self, analysis_id: str, websocket: WebSocket):
         await websocket.accept()
         if analysis_id not in self.active_connections:
             self.active_connections[analysis_id] = set()
         self.active_connections[analysis_id].add(websocket)
+        self.all_connections.add(websocket)
 
     def disconnect(self, analysis_id: str, websocket: WebSocket):
         if analysis_id in self.active_connections:
             self.active_connections[analysis_id].discard(websocket)
             if not self.active_connections[analysis_id]:
                 del self.active_connections[analysis_id]
+        self.all_connections.discard(websocket)
 
     async def broadcast_event(self, analysis_id: str, event_data: dict):
         if analysis_id in self.active_connections:
@@ -55,18 +59,30 @@ class ConnectionManager:
                     dead_sockets.add(ws)
             for dead in dead_sockets:
                 self.active_connections[analysis_id].discard(dead)
+                self.all_connections.discard(dead)
 
     async def broadcast_all(self, event_data: dict):
-        """Broadcasts event to all connected WebSocket clients across all active calls."""
-        for analysis_id in list(self.active_connections.keys()):
-            await self.broadcast_event(analysis_id, event_data)
+        """Broadcasts event to all connected WebSocket clients across all active calls and devices."""
+        dead_sockets = set()
+        text = json.dumps(event_data)
+        for ws in list(self.all_connections):
+            try:
+                await ws.send_text(text)
+            except Exception:
+                dead_sockets.add(ws)
+        for dead in dead_sockets:
+            self.all_connections.discard(dead)
+            for conns in self.active_connections.values():
+                conns.discard(dead)
 
 manager = ConnectionManager()
 
+@ws_router.websocket("/ws/events")
+@ws_router.websocket("/ws/qa")
 @ws_router.websocket("/ws/analysis/{analysis_id}")
-async def websocket_analysis_endpoint(websocket: WebSocket, analysis_id: str):
+async def websocket_analysis_endpoint(websocket: WebSocket, analysis_id: str = "global_events"):
     """
-    WebSocket endpoint for real-time audio chunk streaming and instant risk update notifications.
+    WebSocket endpoint for real-time audio chunk streaming, instant risk updates, and global QA broadcast sync.
     Streams 16kHz mono audio directly to the free local Voice Authenticity Engine.
     """
     await manager.connect(analysis_id, websocket)
@@ -79,6 +95,7 @@ async def websocket_analysis_endpoint(websocket: WebSocket, analysis_id: str):
     try:
         await websocket.send_text(json.dumps({
             "event": "QA_MODE_UPDATED",
+            "type": "QA_MODE_UPDATED",
             "enabled": qa_state["enabled"],
             "scenario": qa_state["scenario"],
             "updated_at": qa_state["updated_at"],
