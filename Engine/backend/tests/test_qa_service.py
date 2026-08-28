@@ -122,7 +122,8 @@ def test_qa_state_survives_navigation_and_remount():
     3. State remains persistently enabled=True and scenario=HIGH.
     """
     client = TestClient(app)
-    qa_service.set_state(True, "HIGH")
+    res_post = client.post("/api/v1/qa/state", json={"enabled": True, "scenario": "HIGH"})
+    assert res_post.status_code == 200
 
     # Simulate navigating to Dashboard
     res1 = client.get("/api/v1/qa/state")

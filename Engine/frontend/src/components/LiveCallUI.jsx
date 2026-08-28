@@ -4,7 +4,7 @@ import {
   Play, Square, CheckCircle2, RefreshCw, AlertTriangle, ShieldCheck,
   Radio, Clock, Database, ChevronRight, Activity, FileText
 } from 'lucide-react';
-import { startAnalysis, requestVerification, resolveWsBase, API_BASE, fetchQAState, updateQAState } from '../services/api';
+import { getCurrentMode, subscribeToModeChanges } from '../services/globalControl';
 
 function formatScore(val, digits = 1) {
   if (val === null || val === undefined || isNaN(Number(val))) return null;
@@ -173,6 +173,28 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId, globalQA
     lastLatencyMs: null,
     simulated: Boolean(initialSim),
   });
+
+  // Supabase Global Control Realtime Mode Subscription
+  useEffect(() => {
+    const unsub = subscribeToModeChanges((mode) => {
+      if (mode && mode !== 'REAL') {
+        const simData = getSimulatedDataForScenario(mode);
+        setRiskData((prev) => ({
+          ...prev,
+          riskScore: simData.risk_score,
+          riskLevel: simData.risk_level,
+          syntheticProbability: simData.synthetic_probability,
+          voiceAuthenticity: simData.authenticity_score,
+          recommendedAction: simData.action,
+          reasons: simData.reasons,
+          simulated: true,
+        }));
+      } else if (mode === 'REAL') {
+        setRiskData((prev) => (prev.simulated ? { ...prev, simulated: false } : prev));
+      }
+    });
+    return () => unsub();
+  }, [getSimulatedDataForScenario]);
 
   // Keep state in sync with globalQAState prop from App root
   useEffect(() => {

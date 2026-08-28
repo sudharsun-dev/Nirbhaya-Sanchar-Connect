@@ -2,10 +2,33 @@ import React, { useState, useEffect } from 'react';
 import { Key, Shield, FileCode, Lock, BookOpen, Sliders, CheckCircle2, AlertTriangle, Radio } from 'lucide-react';
 import { fetchQAState, updateQAState } from '../services/api';
 
+import { getCurrentMode, setMode, subscribeToModeChanges } from '../services/globalControl';
+
 export default function SettingsKeyDocs({ globalQAState, onQAStateChange }) {
   const [localQA, setLocalQA] = useState(globalQAState || { enabled: false, scenario: 'LOW' });
   const [saving, setSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [secretMode, setSecretMode] = useState(getCurrentMode());
+
+  useEffect(() => {
+    const unsub = subscribeToModeChanges((m) => {
+      setSecretMode(m);
+    });
+    return () => unsub();
+  }, []);
+
+  const handleSecretSelect = async (mode) => {
+    setSaving(true);
+    await setMode(mode);
+    setSaving(false);
+
+    // Also sync existing QA state handlers for backward compatibility
+    if (mode === 'REAL') {
+      handleToggle(false);
+    } else {
+      handleScenarioChange(mode);
+    }
+  };
 
   useEffect(() => {
     if (globalQAState) {
@@ -174,6 +197,39 @@ export default function SettingsKeyDocs({ globalQAState, onQAStateChange }) {
               <CheckCircle2 className="w-3.5 h-3.5" /> State successfully saved to database and broadcast to all connected clients!
             </div>
           )}
+
+          {/* SECRET GLOBAL SYSTEM CONTROL (SUPABASE DATABASE-BACKED) */}
+          <div className="mt-4 pt-4 border-t border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-3 text-slate-300">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-mono font-bold text-slate-400">SECRET</span>
+              <span className="text-[10px] font-mono text-slate-500 bg-slate-950 border border-slate-800 px-2 py-0.5 rounded">
+                SUPABASE DB
+              </span>
+            </div>
+            <div className="inline-flex rounded-lg bg-slate-950 p-1 border border-slate-800 gap-1">
+              {['REAL', 'LOW', 'MEDIUM', 'HIGH'].map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  aria-label={`Set global secret mode to ${m}`}
+                  className={`px-3 py-1 rounded text-xs font-mono font-bold transition ${
+                    secretMode === m
+                      ? m === 'REAL'
+                        ? 'bg-emerald-600 text-white shadow-sm font-extrabold'
+                        : m === 'LOW'
+                        ? 'bg-emerald-500 text-white shadow-sm font-extrabold'
+                        : m === 'MEDIUM'
+                        ? 'bg-amber-500 text-white shadow-sm font-extrabold'
+                        : 'bg-rose-600 text-white shadow-sm font-extrabold'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                  onClick={() => handleSecretSelect(m)}
+                >
+                  {m}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
       </div>
 

@@ -11,11 +11,18 @@ import SystemHealth from './components/SystemHealth';
 import SettingsKeyDocs from './components/SettingsKeyDocs';
 import { fetchHealth, fetchQAState, fetchActiveCall, WS_BASE } from './services/api';
 
+import { initGlobalControl } from './services/globalControl';
+
 export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [healthStatus, setHealthStatus] = useState(null);
   const [selectedCallId, setSelectedCallId] = useState(null);
   const [activeCall, setActiveCall] = useState(null);
+
+  // Initialize Supabase Global Control on app startup
+  useEffect(() => {
+    initGlobalControl();
+  }, []);
   
   // Persistent Global QA State at App root (Survives all tab navigation)
   const [qaState, setQaState] = useState({

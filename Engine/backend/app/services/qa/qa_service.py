@@ -135,6 +135,10 @@ class GlobalQAService:
         """
         Persists authoritative QA control state into the qa_control database table.
         """
+        self._enabled = bool(enabled)
+        self._scenario = scenario if scenario in ["LOW", "MEDIUM", "HIGH"] else "LOW"
+        spec = FIXED_QA_DATABASE_VALUES.get(self._scenario, FIXED_QA_DATABASE_VALUES["LOW"])
+        now = datetime.now(timezone.utc)
         try:
             from app.database.session import AsyncSessionLocal
             from app.database.models import QAControlRecord
@@ -168,14 +172,14 @@ class GlobalQAService:
                         confidence=spec["confidence"],
                         verdict=spec["verdict"],
                         risk_level=spec["risk_level"],
-                        recommended_action=spec["recommended_action"],
                         updated_at=now
                     )
                     session.add(record)
-                await session.commit()
+
                 self._enabled = bool(enabled)
                 self._scenario = scenario
                 self._updated_at = now.isoformat()
+                await session.commit()
                 logger.info(f"[QA-DB-SAVE] Committed QA state to DB: enabled={enabled} scenario={scenario} score={spec['score']}")
         except Exception as e:
             logger.warning(f"[QA-DB-SAVE] Warning persisting QA state to DB: {e}")
