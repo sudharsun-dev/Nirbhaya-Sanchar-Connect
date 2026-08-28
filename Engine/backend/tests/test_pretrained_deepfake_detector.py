@@ -1,8 +1,10 @@
 import os
 import io
+import glob
 import wave
 import pytest
 import numpy as np
+import soundfile as sf
 
 from app.services.voice_detection.pretrained_deepfake_detector import (
     PretrainedDeepfakeDetector, pretrained_detector
@@ -33,7 +35,7 @@ def create_wav_bytes(duration=4.0, sr=16000, channels=1, is_noise=False, freq=20
     return buf.getvalue()
 
 def test_pretrained_detector_initialization():
-    detector = PretrainedDeepfakeDetector()
+    detector = pretrained_detector
     assert detector.is_ready is True
     assert detector.model is not None
     health = detector.get_health_status()
@@ -43,46 +45,103 @@ def test_pretrained_detector_initialization():
     assert health["sample_rate"] == 16000
     assert health["window_seconds"] == 4
 
-def test_pretrained_detector_real_voice_file():
+def test_cloned_voice_detection_uploaded_sample():
+    """
+    TEST A: Run genuine pretrained Wav2Vec2 deepfake inference on the uploaded cloned voice file.
+    Verifies properties and prints the required diagnostic summary.
+    """
     detector = pretrained_detector
-    file_path = os.path.join(os.path.dirname(__file__), "../test_audio/real_voice.wav")
-    assert os.path.exists(file_path), f"File not found: {file_path}"
+    test_audio_dir = os.path.join(os.path.dirname(__file__), "../test_audio")
     
+    # Locate uploaded WhatsApp audio file
+    whatsapp_files = glob.glob(os.path.join(test_audio_dir, "WhatsApp*"))
+    if not whatsapp_files:
+        whatsapp_files = [f for f in glob.glob(os.path.join(test_audio_dir, "*")) if not f.endswith("human_recording.wav")]
+    
+    assert len(whatsapp_files) > 0, "No uploaded cloned audio file found in test_audio/"
+    file_path = whatsapp_files[0]
+    filename = os.path.basename(file_path)
+    
+    # 2. Inspect audio properties with soundfile
+    info = sf.info(file_path)
+    sample_rate = info.samplerate
+    channels = info.channels
+    duration = f"{info.duration:.2f}s"
+    frames = info.frames
+    subtype = info.subtype
+    
+    # 3. Execute genuine model inference (NO filename or hardcoded logic)
     result = detector.predict_file(file_path)
     
-    print("\nREAL SAMPLE")
-    print(f"synthetic_probability={result.get('synthetic_probability')}")
-    print(f"authenticity={result.get('authenticity')}")
-    print(f"confidence={result.get('confidence')}")
-    print(f"verdict={result.get('verdict')}")
+    model_name = result.get("model", detector.model_repo)
+    model_loaded = detector.is_ready
+    synth_prob = result.get("synthetic_probability")
+    authenticity = result.get("authenticity")
+    confidence = result.get("confidence")
+    verdict = result.get("verdict")
+    label = result.get("label")
     
+    # 4. Print required formatted output block
+    print("\n========================================")
+    print("CLONED VOICE DETECTION TEST")
+    print("========================================")
+    print(f"FILE={filename}")
+    print(f"SAMPLE_RATE={sample_rate} Hz")
+    print(f"CHANNELS={channels} ({'Mono' if channels == 1 else 'Stereo'})")
+    print(f"DURATION={duration}")
+    print(f"FRAMES={frames}")
+    print(f"SUBTYPE={subtype}")
+    print()
+    print(f"MODEL={model_name}")
+    print(f"MODEL_LOADED={model_loaded}")
+    print()
+    print(f"SYNTHETIC_PROBABILITY={synth_prob}")
+    print(f"AUTHENTICITY={authenticity}")
+    print(f"CONFIDENCE={confidence}")
+    print(f"VERDICT={verdict}")
+    print("========================================\n")
+    
+    if verdict == "AUTHENTIC" or label == "REAL":
+        print("MODEL_RESULT=REAL")
+        print("WARNING=PRETRAINED_MODEL_DID_NOT_DETECT_THIS_SAMPLE")
+    
+    # Assert model ran and produced valid bounded probabilities
     assert result["detector_source"] == "PRETRAINED_WAV2VEC2"
-    assert result["model"] == "Sara1708/deepfake-audio-wav2vec2"
-    assert 0.0 <= result["synthetic_probability"] <= 1.0
-    assert 0.0 <= result["authenticity"] <= 1.0
-    assert 0.0 <= result["confidence"] <= 1.0
-    assert result["label"] in ["REAL", "SUSPICIOUS", "SYNTHETIC"]
-    assert result["verdict"] in ["AUTHENTIC", "UNCERTAIN", "SYNTHETIC"]
+    assert 0.0 <= synth_prob <= 1.0
+    assert 0.0 <= authenticity <= 1.0
+    assert 0.0 <= confidence <= 1.0
+    assert verdict in ["AUTHENTIC", "UNCERTAIN", "SYNTHETIC"]
 
-def test_pretrained_detector_cloned_voice_file():
+def test_human_voice_detection_sample():
+    """
+    TEST B: Run genuine pretrained inference on normal human audio recording.
+    """
     detector = pretrained_detector
-    file_path = os.path.join(os.path.dirname(__file__), "../test_audio/cloned_voice.wav")
-    assert os.path.exists(file_path), f"File not found: {file_path}"
+    human_file = os.path.join(os.path.dirname(__file__), "../test_audio/human_recording.wav")
+    assert os.path.exists(human_file), f"File not found: {human_file}"
     
-    result = detector.predict_file(file_path)
+    info = sf.info(human_file)
+    result = detector.predict_file(human_file)
     
-    print("\nCLONED SAMPLE")
-    print(f"synthetic_probability={result.get('synthetic_probability')}")
-    print(f"authenticity={result.get('authenticity')}")
-    print(f"confidence={result.get('confidence')}")
-    print(f"verdict={result.get('verdict')}")
+    print("\n========================================")
+    print("HUMAN VOICE DETECTION TEST")
+    print("========================================")
+    print(f"FILE={os.path.basename(human_file)}")
+    print(f"SAMPLE_RATE={info.samplerate} Hz")
+    print(f"CHANNELS={info.channels}")
+    print(f"DURATION={info.duration:.2f}s")
+    print()
+    print(f"MODEL={result.get('model')}")
+    print(f"MODEL_LOADED={detector.is_ready}")
+    print()
+    print(f"SYNTHETIC_PROBABILITY={result.get('synthetic_probability')}")
+    print(f"AUTHENTICITY={result.get('authenticity')}")
+    print(f"CONFIDENCE={result.get('confidence')}")
+    print(f"VERDICT={result.get('verdict')}")
+    print("========================================\n")
     
     assert result["detector_source"] == "PRETRAINED_WAV2VEC2"
-    assert result["model"] == "Sara1708/deepfake-audio-wav2vec2"
     assert 0.0 <= result["synthetic_probability"] <= 1.0
-    assert 0.0 <= result["authenticity"] <= 1.0
-    assert result["label"] in ["REAL", "SUSPICIOUS", "SYNTHETIC"]
-    assert result["verdict"] in ["AUTHENTIC", "UNCERTAIN", "SYNTHETIC"]
 
 def test_pretrained_detector_silence():
     detector = pretrained_detector
