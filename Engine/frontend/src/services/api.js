@@ -3,7 +3,7 @@
 function resolveApiBase() {
   const configured = (import.meta.env.VITE_ENGINE_HTTP_URL || import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
   if (!configured || configured.includes('nirbhaya-connect-server') || configured.includes(':3001')) {
-    return import.meta.env.DEV ? 'http://localhost:8000/api/v1' : 'https://nirbhaya-sanchar-connect.onrender.com/api/v1';
+    return import.meta.env.DEV ? 'http://localhost:8000/api/v1' : 'https://nirbhaya-sanchar-connect-1.onrender.com/api/v1';
   }
   return configured.endsWith('/api/v1') ? configured : `${configured}/api/v1`;
 }
