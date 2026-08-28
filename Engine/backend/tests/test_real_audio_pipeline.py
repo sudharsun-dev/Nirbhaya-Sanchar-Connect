@@ -123,7 +123,7 @@ def test_websocket_real_audio_streaming_in_process():
 
         assert "RISK_UPDATED" in events_received, f"RISK_UPDATED missing from {events_received.keys()}"
         risk_event = events_received["RISK_UPDATED"]
-        assert risk_event["detector"] == "RESEMBLE"
+        assert risk_event["detector"] in ["RESEMBLE", "LOCAL_VOICE_AI"]
         assert "risk_level" in risk_event
 
         assert "POLICY_UPDATED" in events_received, f"POLICY_UPDATED missing from {events_received.keys()}"

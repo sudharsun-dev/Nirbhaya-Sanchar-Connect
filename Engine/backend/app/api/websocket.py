@@ -15,7 +15,7 @@ from app.database.models import (
 )
 from app.config import settings
 from app.services.audio.preprocessor import preprocessor
-from app.services.voice_detection.resemble_detector import resemble_detector
+from app.services.voice_detection.free_detector import free_detector as voice_detector
 from app.services.speaker.verifier import speaker_verifier
 from app.services.asr.asr_engine import asr_engine
 from app.services.context.context_engine import context_engine
@@ -45,14 +45,16 @@ class ConnectionManager:
             if not self.active_connections[analysis_id]:
                 del self.active_connections[analysis_id]
 
-    async def broadcast_event(self, analysis_id: str, payload: dict):
+    async def broadcast_event(self, analysis_id: str, event_data: dict):
         if analysis_id in self.active_connections:
-            connections = list(self.active_connections[analysis_id])
-            for connection in connections:
+            dead_sockets = set()
+            for ws in self.active_connections[analysis_id]:
                 try:
-                    await connection.send_text(json.dumps(payload))
+                    await ws.send_text(json.dumps(event_data))
                 except Exception:
-                    self.disconnect(analysis_id, connection)
+                    dead_sockets.add(ws)
+            for dead in dead_sockets:
+                self.active_connections[analysis_id].discard(dead)
 
 manager = ConnectionManager()
 
@@ -60,7 +62,7 @@ manager = ConnectionManager()
 async def websocket_analysis_endpoint(websocket: WebSocket, analysis_id: str):
     """
     WebSocket endpoint for real-time audio chunk streaming and instant risk update notifications.
-    Streams 16kHz mono audio directly to the authoritative Resemble AI detection engine.
+    Streams 16kHz mono audio directly to the free local Voice Authenticity Engine.
     """
     await manager.connect(analysis_id, websocket)
     client_host = websocket.client.host if websocket.client else 'unknown'
@@ -106,20 +108,20 @@ async def websocket_analysis_endpoint(websocket: WebSocket, analysis_id: str):
                 rms = processed_audio.get("rms_energy", 0.0)
                 vad = processed_audio.get("speech_detected", True)
 
-                # 2. Resemble AI Streaming Deepfake Detection (Authoritative Engine)
-                resemble_res = None
+                # 2. Local Voice Authenticity & Deepfake Audio Detection (Free Local Engine)
+                voice_res = None
                 try:
-                    resemble_res = await resemble_detector.send_audio_chunk(
+                    voice_res = await voice_detector.send_audio_chunk(
                         call_id=analysis_id,
                         audio_bytes=audio_bytes,
                         window_index=window_index
                     )
                 except Exception as res_err:
-                    print(f"[RESEMBLE-ERROR] call_id={analysis_id} window={window_index} error={res_err}")
-                    resemble_res = {
+                    print(f"[VOICE-DETECTOR-ERROR] call_id={analysis_id} window={window_index} error={res_err}")
+                    voice_res = {
                         "available": False,
                         "status": "ERROR",
-                        "source": "RESEMBLE",
+                        "source": "LOCAL_AI",
                         "label": None,
                         "synthetic_probability": None,
                         "authenticity_score": None,
@@ -179,9 +181,9 @@ async def websocket_analysis_endpoint(websocket: WebSocket, analysis_id: str):
                         "anomalies": []
                     }
 
-                # 7. Deterministic Risk & Policy Computation based on Resemble AI
+                # 7. Deterministic Risk & Policy Computation
                 risk_output = risk_engine.compute_risk(
-                    voice_result=resemble_res,
+                    voice_result=voice_res,
                     speaker_result=speaker_res,
                     context_result=context_res,
                     transaction_result=None,
@@ -216,23 +218,16 @@ async def websocket_analysis_endpoint(websocket: WebSocket, analysis_id: str):
                     "call_id": analysis_id,
                     "analysis_id": analysis_id,
                     "window_index": window_index,
-                    "detector": "RESEMBLE",
+                    "detector": "LOCAL_VOICE_AI",
                     "synthetic_probability": synth_prob,
                     "authenticity_score": auth_score,
-                    "confidence": risk_output.get("overall_confidence"),
+                    "confidence": risk_output.get("overall_confidence", voice_res.get("confidence") if voice_res else None),
                     "risk_score": risk_score_val,
                     "risk_level": risk_level_val,
                     "action": rec_action,
-                    "label": resemble_res.get("label") if resemble_res else None,
-                    "resemble": {
-                        "available": resemble_res.get("available", False) if resemble_res else False,
-                        "status": resemble_res.get("status") if resemble_res else "UNAVAILABLE",
-                        "label": resemble_res.get("label") if resemble_res else None,
-                        "synthetic_probability": resemble_res.get("synthetic_probability") if resemble_res else None,
-                        "authenticity_score": resemble_res.get("authenticity_score") if resemble_res else None,
-                        "confidence": resemble_res.get("confidence") if resemble_res else None,
-                        "consistency": resemble_res.get("consistency") if resemble_res else None
-                    },
+                    "label": voice_res.get("label") if voice_res else None,
+                    "voice_authenticity": voice_res,
+                    "resemble": voice_res,
                     "risk": {
                         "score": risk_score_val,
                         "level": risk_level_val,
@@ -278,7 +273,7 @@ async def websocket_analysis_endpoint(websocket: WebSocket, analysis_id: str):
                         risk_output=risk_output,
                         policy_output=policy_output,
                         verification_required=policy_output.get("verification_required", False),
-                        resemble_res=resemble_res,
+                        resemble_res=voice_res,
                         window_index=window_index
                     )
                     print(f"[CALLBACK] status={cb_res.get('status')} HTTP={cb_res.get('http_status')} error={cb_res.get('error')}")
@@ -383,20 +378,20 @@ async def websocket_analysis_endpoint(websocket: WebSocket, analysis_id: str):
     except WebSocketDisconnect:
         manager.disconnect(analysis_id, websocket)
         try:
-            await resemble_detector.close_stream(analysis_id)
+            await voice_detector.close_stream(analysis_id)
         except Exception:
             pass
     except Exception as e:
         logger.error(f"[WS EXCEPTION] WebSocket error: {e}")
         manager.disconnect(analysis_id, websocket)
         try:
-            await resemble_detector.close_stream(analysis_id)
+            await voice_detector.close_stream(analysis_id)
         except Exception:
             pass
     finally:
         manager.disconnect(analysis_id, websocket)
         try:
-            await resemble_detector.close_stream(analysis_id)
+            await voice_detector.close_stream(analysis_id)
         except Exception:
             pass
 

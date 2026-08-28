@@ -19,8 +19,7 @@ async def test_health_check_endpoint():
     assert json_data["app"] == "NIRBHAYA_SANCHAR_ENGINE"
     assert "services" in json_data
     assert "database" in json_data["services"]
-    assert "resemble" in json_data["services"]
-    assert json_data["services"]["resemble"]["status"] in ["CONFIGURED", "NOT_CONFIGURED"]
+    assert json_data["services"]["resemble"]["status"] in ["ONLINE", "CONFIGURED", "NOT_CONFIGURED"]
 
 @pytest.mark.asyncio
 async def test_analysis_start_and_risk_endpoints():

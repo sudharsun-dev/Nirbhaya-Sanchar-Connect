@@ -62,11 +62,11 @@ class RiskEngine:
                 
                 label = voice_result.get("label", "UNKNOWN")
                 if synth_prob >= 70.0:
-                    reasons.append(f"Resemble AI detected high deepfake probability ({synth_prob:.1f}% - {label})")
+                    reasons.append(f"Voice AI Engine detected high deepfake probability ({synth_prob:.1f}% - {label})")
                 elif synth_prob >= 30.0:
-                    reasons.append(f"Resemble AI detected moderate synthetic voice indicators ({synth_prob:.1f}%)")
+                    reasons.append(f"Voice AI Engine detected moderate synthetic voice indicators ({synth_prob:.1f}%)")
                 else:
-                    reasons.append(f"Resemble AI verified authentic voice patterns ({auth_score:.1f}% authenticity)")
+                    reasons.append(f"Voice AI Engine verified authentic voice patterns ({auth_score:.1f}% authenticity)")
 
         # If voice analysis is still pending/waiting
         if synth_prob is None:
