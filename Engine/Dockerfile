@@ -10,7 +10,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python requirements
+# Install CPU-only PyTorch and TorchAudio to keep Docker image lightweight and prevent Render 512MB OOM crash
+RUN pip install --no-cache-dir torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+
+# Install remaining Python requirements
 COPY backend/requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt
 
