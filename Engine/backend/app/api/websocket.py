@@ -242,6 +242,12 @@ async def websocket_analysis_endpoint(websocket: WebSocket, analysis_id: str):
                     "recommended_action": rec_action,
                     "processing_latency_ms": pipeline_latency_ms
                 }
+                
+                # Diagnostic logging for live pipeline verification
+                print(f"[LIVE-DETECT]\ncall_id={analysis_id}\nwindow_index={window_index}\naudio_bytes={len(audio_bytes)}\nsample_rate={sr}\nchannels={ch}\nsamples={samples_count}\nduration_ms={dur_ms}\nmodel_called={voice_res is not None and voice_res.get('status') != 'ERROR'}\n")
+                print(f"[MODEL-RESULT]\ncall_id={analysis_id}\nwindow_index={window_index}\nsynthetic_probability={voice_res.get('synthetic_probability') if voice_res else None}\nauthenticity={voice_res.get('authenticity_score') if voice_res else None}\nconfidence={voice_res.get('confidence') if voice_res else None}\nlabel={voice_res.get('label') if voice_res else None}\n")
+                print(f"[UI-TELEMETRY]\nsynthetic_probability={synth_prob}\nauthenticity={auth_score}\nconfidence={risk_event_payload.get('confidence')}\nverdict={voice_res.get('verdict') if voice_res else 'UNKNOWN'}\n")
+                
                 print(f"[TELEMETRY-BROADCAST] call_id={analysis_id} window={window_index} risk_score={risk_score_val} synthetic_probability={synth_prob} risk_level={risk_level_val} action={rec_action}")
                 await manager.broadcast_event(analysis_id, risk_event_payload)
 
@@ -336,10 +342,10 @@ async def websocket_analysis_endpoint(websocket: WebSocket, analysis_id: str):
                             authenticity_score=auth_score,
                             confidence=risk_output.get("overall_confidence", 0.0) or 0.0,
                             audio_quality=processed_audio.get("audio_quality_score", 1.0),
-                            model_name="RESEMBLE_STREAMING_DETECT",
+                            model_name=voice_res.get("model", "Sara1708/deepfake-audio-wav2vec2") if voice_res else "Sara1708/deepfake-audio-wav2vec2",
                             model_version="1.0",
                             inference_time_ms=pipeline_latency_ms,
-                            status=resemble_res.get("status", "SUCCESS") if resemble_res else "ERROR"
+                            status=voice_res.get("status", "SUCCESS") if voice_res else "ERROR"
                         )
                         db.add(voice_rec)
 

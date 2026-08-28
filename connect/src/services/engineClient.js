@@ -334,6 +334,7 @@ export function startAudioStreamToEngine(analysisId, mediaStreamTrack, options =
         const wavBuffer = encodeWav(chunkSamples, targetSampleRate);
         const wsReadyState = socket ? (socket.readyState === 1 ? 'OPEN' : socket.readyState) : 'NULL';
 
+        console.info(`[MIC-AUDIO]\nsampleRate=${targetSampleRate}\nchannels=1\nsamples=${chunkSamples.length}\nrms=${rmsEnergy.toFixed(4)}`);
         console.info(`[REAL-MIC-WINDOW] window_index=${windowIndex} native_sample_rate=${nativeSampleRate} output_sample_rate=16000 samples=${chunkSamples.length} duration_ms=2500 rms=${rmsEnergy.toFixed(4)}`);
         console.info(`[REAL-MIC-SEND] window_index=${windowIndex} bytes=${wavBuffer.byteLength} ws_ready_state=${wsReadyState}`);
 

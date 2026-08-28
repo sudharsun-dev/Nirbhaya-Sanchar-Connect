@@ -61,7 +61,14 @@ export async function connectToRoom(roomName, identity, handlers = {}) {
   handlers.onParticipantChange?.(null, room)
   let microphone
   try {
-    microphone = await createLocalAudioTrack()
+    const audioConstraints = {
+      echoCancellation: false,
+      noiseSuppression: false,
+      autoGainControl: false,
+      channelCount: 1,
+    }
+    console.info(`[MIC-CONFIG]\nechoCancellation=false\nnoiseSuppression=false\nautoGainControl=false`)
+    microphone = await createLocalAudioTrack(audioConstraints)
     await room.localParticipant.publishTrack(microphone)
   } catch (error) {
     room.disconnect()
