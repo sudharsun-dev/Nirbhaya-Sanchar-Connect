@@ -79,14 +79,9 @@ async def get_system_health():
         services={
             "database": ServiceHealthStatus(status=db_status, message=f"Database is {db_status}"),
             "resemble": ServiceHealthStatus(
-                status=resemble_status,
-                message="Resemble AI streaming detector ready" if resemble_detector.is_configured else "RESEMBLE_API_KEY not configured",
-                details={
-                    "provider": "Resemble AI",
-                    "model": "Resemble Streaming Detect",
-                    "endpoint": resemble_detector.stream_url,
-                    "configured": resemble_detector.is_configured
-                }
+                status=resemble_detector.get_health_status()["status"],
+                message=resemble_detector.get_health_status()["message"],
+                details=resemble_detector.get_health_status()["details"]
             ),
             "speaker_verifier": ServiceHealthStatus(status=speaker_status, details={"model": speaker_verifier.model_name}),
             "asr_engine": ServiceHealthStatus(status=asr_status, details={"provider": settings.ASR_PROVIDER, "model": settings.ASR_MODEL}),

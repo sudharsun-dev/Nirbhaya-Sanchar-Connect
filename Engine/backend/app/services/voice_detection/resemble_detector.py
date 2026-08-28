@@ -58,6 +58,8 @@ class ResembleStreamingDetector:
         self.stream_url = settings.RESEMBLE_STREAM_URL
         self.active_sessions: Dict[str, ResembleStreamSession] = {}
         self._lock = asyncio.Lock()
+        self.last_provider_status: Optional[int] = None
+        self.provider_access_state: str = "CONFIGURED" if settings.is_resemble_configured else "NOT_CONFIGURED"
 
     @property
     def is_configured(self) -> bool:
@@ -69,6 +71,7 @@ class ResembleStreamingDetector:
         Strictly one stream per active call_id.
         """
         if not self.is_configured:
+            self.provider_access_state = "NOT_CONFIGURED"
             return None
 
         async with self._lock:
@@ -98,6 +101,8 @@ class ResembleStreamingDetector:
                 session = ResembleStreamSession(call_id=call_id, ws=ws)
                 session.receiver_task = asyncio.create_task(self._listen_resemble_responses(session))
                 self.active_sessions[call_id] = session
+                self.last_provider_status = 200
+                self.provider_access_state = "ACTIVE"
                 
                 # Wait briefly for ready handshake
                 try:
@@ -108,12 +113,36 @@ class ResembleStreamingDetector:
 
                 print(f"[RESEMBLE-READY] call_id={call_id}")
                 return session
-            except (websockets.exceptions.InvalidStatus, getattr(websockets.exceptions, 'InvalidStatusCode', Exception)) as status_err:
-                status_code = getattr(status_err, 'status_code', getattr(getattr(status_err, 'response', None), 'status_code', 'UNKNOWN'))
-                print(f"[RESEMBLE-ERROR] call_id={call_id} HTTP_{status_code}: {status_err}")
-                return None
             except Exception as e:
-                print(f"[RESEMBLE-ERROR] call_id={call_id} Connection failed: {e}")
+                status_code = getattr(e, 'status_code', getattr(getattr(e, 'response', None), 'status_code', None))
+                if status_code is None and hasattr(e, 'response') and hasattr(e.response, 'status_code'):
+                    status_code = e.response.status_code
+                
+                # Try parsing from string if needed (e.g. "HTTP 402")
+                if status_code is None:
+                    err_str = str(e)
+                    for code in [401, 402, 403, 404, 429, 500, 502, 503]:
+                        if f"HTTP {code}" in err_str or f"HTTP_{code}" in err_str or str(code) in err_str:
+                            status_code = code
+                            break
+
+                self.last_provider_status = status_code if isinstance(status_code, int) else None
+                
+                if status_code == 402:
+                    self.provider_access_state = "BILLING_REQUIRED"
+                    print(f"[RESEMBLE-ERROR] provider=Resemble status=402 reason=PROVIDER_ACCESS_OR_BILLING")
+                elif status_code == 401:
+                    self.provider_access_state = "UNAUTHORIZED"
+                    print(f"[RESEMBLE-ERROR] provider=Resemble status=401 reason=UNAUTHORIZED")
+                elif status_code == 403:
+                    self.provider_access_state = "FORBIDDEN"
+                    print(f"[RESEMBLE-ERROR] provider=Resemble status=403 reason=FORBIDDEN")
+                elif status_code is not None:
+                    self.provider_access_state = "UNAVAILABLE"
+                    print(f"[RESEMBLE-ERROR] provider=Resemble status={status_code} reason=HTTP_{status_code}")
+                else:
+                    self.provider_access_state = "UNAVAILABLE"
+                    print(f"[RESEMBLE-ERROR] call_id={call_id} Connection failed: {e}")
                 return None
 
     async def send_audio_chunk(self, call_id: str, audio_bytes: bytes, window_index: int = 1) -> dict:
@@ -139,7 +168,7 @@ class ResembleStreamingDetector:
         if not session or not session.is_connected:
             return {
                 "available": False,
-                "status": "UNAVAILABLE",
+                "status": "PROVIDER_UNAVAILABLE" if self.provider_access_state in ["BILLING_REQUIRED", "UNAUTHORIZED", "FORBIDDEN"] else "UNAVAILABLE",
                 "source": "RESEMBLE",
                 "label": None,
                 "synthetic_probability": None,
@@ -147,7 +176,9 @@ class ResembleStreamingDetector:
                 "confidence": None,
                 "aggregated_score": None,
                 "consistency": None,
-                "detail": session.error if session else "Unable to establish Resemble stream."
+                "provider_status": self.last_provider_status,
+                "provider_access": self.provider_access_state,
+                "detail": f"Provider access unavailable ({self.provider_access_state})" if self.last_provider_status else (session.error if session else "Unable to establish Resemble stream.")
             }
 
         try:
@@ -333,18 +364,23 @@ class ResembleStreamingDetector:
                 "message": "RESEMBLE_API_KEY not configured",
                 "details": {
                     "provider": "Resemble AI",
+                    "model": "Resemble Streaming Detect",
                     "endpoint": self.stream_url,
-                    "configured": False
+                    "configured": False,
+                    "provider_access": "NOT_CONFIGURED"
                 }
             }
         return {
-            "status": "CONFIGURED",
-            "message": "Resemble AI streaming detector ready",
+            "status": "CONFIGURED" if self.provider_access_state in ["CONFIGURED", "ACTIVE"] else "PROVIDER_UNAVAILABLE",
+            "message": "Resemble AI streaming detector ready" if self.provider_access_state in ["CONFIGURED", "ACTIVE"] else f"Resemble AI provider access status: {self.provider_access_state}",
             "details": {
                 "provider": "Resemble AI",
+                "model": "Resemble Streaming Detect",
                 "endpoint": self.stream_url,
                 "configured": True,
-                "active_streams": len(self.active_sessions)
+                "active_streams": len(self.active_sessions),
+                "provider_status": self.last_provider_status,
+                "provider_access": self.provider_access_state
             }
         }
 
