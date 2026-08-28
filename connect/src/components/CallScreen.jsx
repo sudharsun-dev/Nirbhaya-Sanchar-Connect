@@ -245,17 +245,17 @@ export default function CallScreen({ name, roomName, callId, onEnded }) {
                 : securityState.riskLevel === 'NO_VOICE'
                 ? 'AI Security: NO VOICE DETECTED'
                 : securityState.status === 'ACTIVE'
-                ? 'AI Voice Monitoring Active (Waiting for Voice)'
+                ? 'Voice Authenticity Engine Active (Waiting for Voice)'
                 : securityState.status === 'OFFLINE'
-                ? 'AI SECURITY ENGINE OFFLINE'
-                : 'AI Voice Shield Initializing...'}
+                ? 'DETECTOR UNAVAILABLE'
+                : 'Pretrained Deepfake Detector Initializing...'}
             </strong>
             <small>
               {securityState.syntheticProbability !== null
-                ? `RESEMBLE AI: ${formatPercent(securityState.syntheticProbability, 1)}% · AUTHENTICITY: ${formatPercent(securityState.authenticityScore, 1)}% · Action: ${securityState.recommendedAction || 'CONTINUE'}`
+                ? `WAV2VEC2: ${formatPercent(securityState.syntheticProbability, 1)}% · AUTHENTICITY: ${formatPercent(securityState.authenticityScore, 1)}% · ${securityState.detectorStatus || 'PRETRAINED MODEL ACTIVE'}`
                 : (securityState.windowsAnalyzed || 0) > 0
                 ? `Streaming real audio (${securityState.windowsAnalyzed} windows analyzed)`
-                : 'Streaming real microphone audio to Resemble AI'}
+                : 'Streaming real microphone audio to Wav2Vec2 Deepfake Detector'}
             </small>
           </div>
           <span className="hud-toggle">{showSecurityDrawer ? '▲' : '▼'}</span>
@@ -265,17 +265,21 @@ export default function CallScreen({ name, roomName, callId, onEnded }) {
         {showSecurityDrawer && (
           <div className="security-details-drawer">
             <div className="drawer-header">
-              <h3>NIRBHAYA SANCHAR RESEMBLE AI SECURITY</h3>
+              <h3>VOICE AUTHENTICITY ENGINE — PRETRAINED DEEPFAKE DETECTOR</h3>
               <span className={`risk-tag ${String(securityState.riskLevel || 'low').toLowerCase()}`}>{securityState.riskLevel || 'LOW'} RISK</span>
             </div>
 
             <div className="drawer-grid">
               <div className="metric-box">
-                <span className="label">OVERALL RISK</span>
-                <span className="value">{formatScore(securityState.riskScore, 1) !== null ? `${formatScore(securityState.riskScore, 1)}/100` : '—'}</span>
+                <span className="label">DETECTOR</span>
+                <span className="value">Wav2Vec2 Deepfake Detector</span>
               </div>
               <div className="metric-box">
-                <span className="label">RESEMBLE SYNTHETIC</span>
+                <span className="label">STATUS</span>
+                <span className="value">{securityState.detectorStatus || (securityState.status === 'ACTIVE' ? 'PRETRAINED MODEL ACTIVE' : 'INITIALIZING')}</span>
+              </div>
+              <div className="metric-box">
+                <span className="label">SYNTHETIC PROBABILITY</span>
                 <span className="value">{formatPercent(securityState.syntheticProbability, 1) !== null ? `${formatPercent(securityState.syntheticProbability, 1)}%` : 'Processing'}</span>
               </div>
               <div className="metric-box">
@@ -283,12 +287,16 @@ export default function CallScreen({ name, roomName, callId, onEnded }) {
                 <span className="value">{formatPercent(securityState.authenticityScore, 1) !== null ? `${formatPercent(securityState.authenticityScore, 1)}%` : '—'}</span>
               </div>
               <div className="metric-box">
-                <span className="label">VERDICT LABEL</span>
+                <span className="label">VERDICT</span>
                 <span className="value">{securityState.label || (securityState.riskLevel === 'NO_VOICE' ? 'NO VOICE' : 'ANALYZING')}</span>
               </div>
               <div className="metric-box">
-                <span className="label">AI CONFIDENCE</span>
+                <span className="label">CONFIDENCE</span>
                 <span className="value">{securityState.overallConfidence !== null && !isNaN(Number(securityState.overallConfidence)) ? `${(Number(securityState.overallConfidence) * 100).toFixed(0)}%` : '—'}</span>
+              </div>
+              <div className="metric-box">
+                <span className="label">SOURCE</span>
+                <span className="value">{securityState.detectorSource || 'PRETRAINED MODEL'}</span>
               </div>
               <div className="metric-box">
                 <span className="label">POLICY ACTION</span>

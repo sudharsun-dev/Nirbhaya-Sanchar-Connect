@@ -133,7 +133,7 @@ export function connectEngineStream(analysisId, onEventCallback) {
         console.info(`[TRACE] RISK_UPDATED call_id=${analysisId} risk=${data.risk_score} synthetic=${data.synthetic_probability}% level=${data.risk_level} action=${data.recommended_action}`);
         console.info(`[RISK] score=${data.risk_score} level=${data.risk_level} action=${data.recommended_action}`);
         if (data.synthetic_probability !== undefined) {
-          console.info(`[AASIST] inference completed synthetic_probability=${data.synthetic_probability}%`);
+          console.info(`[PRETRAINED] inference completed synthetic_probability=${data.synthetic_probability}%`);
         }
       }
       if (onEventCallback) onEventCallback(data);

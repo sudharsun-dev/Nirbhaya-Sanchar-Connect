@@ -15,7 +15,7 @@ from app.database.models import (
 )
 from app.config import settings
 from app.services.audio.preprocessor import preprocessor
-from app.services.voice_detection.free_detector import free_detector as voice_detector
+from app.services.voice_detection.pretrained_deepfake_detector import pretrained_detector as voice_detector
 from app.services.speaker.verifier import speaker_verifier
 from app.services.asr.asr_engine import asr_engine
 from app.services.context.context_engine import context_engine
@@ -218,7 +218,9 @@ async def websocket_analysis_endpoint(websocket: WebSocket, analysis_id: str):
                     "call_id": analysis_id,
                     "analysis_id": analysis_id,
                     "window_index": window_index,
-                    "detector": "LOCAL_VOICE_AI",
+                    "detector": "PRETRAINED_WAV2VEC2",
+                    "detector_source": voice_res.get("detector_source", "PRETRAINED_WAV2VEC2") if voice_res else "PRETRAINED_WAV2VEC2",
+                    "model": voice_res.get("model", "Sara1708/deepfake-audio-wav2vec2") if voice_res else "Sara1708/deepfake-audio-wav2vec2",
                     "synthetic_probability": synth_prob,
                     "authenticity_score": auth_score,
                     "confidence": risk_output.get("overall_confidence", voice_res.get("confidence") if voice_res else None),
@@ -227,6 +229,7 @@ async def websocket_analysis_endpoint(websocket: WebSocket, analysis_id: str):
                     "action": rec_action,
                     "label": voice_res.get("label") if voice_res else None,
                     "voice_authenticity": voice_res,
+                    "pretrained_deepfake_detector": voice_res,
                     "resemble": voice_res,
                     "risk": {
                         "score": risk_score_val,
