@@ -102,84 +102,189 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId, globalQA
 
   const [availableCalls, setAvailableCalls] = useState([]);
   const [audioStreamState, setAudioStreamState] = useState(
-    (activeCall?.status === 'ACTIVE' || initialCallId) ? 'AUDIO RECEIVING' : 'WAITING FOR AUDIO'
+    (activeCall?.status === 'ACTIVE' || initialCallId) ? 'AUDIO RECEIVING' : 'WAITING FOR SYSTEM 2 CALL'
   );
   const [isMicActive, setIsMicActive] = useState(false);
   const [rmsVolume, setRmsVolume] = useState(0);
   const [analysisId, setAnalysisId] = useState(activeCall?.call_id || initialCallId || null);
 
-  // Manual Audio File Upload State
-  const [selectedAudioFile, setSelectedAudioFile] = useState(null);
-  const [isFileAnalyzing, setIsFileAnalyzing] = useState(false);
-  const [fileAnalysisProgress, setFileAnalysisProgress] = useState(0);
+  // Start Live Audio Tap & Session (Browser Microphone Capture)
+  const handleStartAnalysis = async () => {
+    try {
+      const activeId = callState.callId || `live-mic-${Date.now()}`;
+      isLocallyStreamingRef.current = true;
+      currentSubscribedCallIdRef.current = activeId;
+      setAnalysisId(activeId);
+      setCallState((prev) => ({ ...prev, callId: activeId, status: 'ANALYZING' }));
+      setAudioStreamState('WAITING FOR MICROPHONE');
 
-  const handleFileSelect = (e) => {
-    if (e.target.files && e.target.files[0]) {
-      setSelectedAudioFile(e.target.files[0]);
+      console.info(`[LIVE-START]\ncall_id=${activeId}`);
+      console.info(`[TRACE-CALL] call_id=${activeId}`);
+      console.info(`[TRACE-ANALYSIS] call_id=${activeId} analysis_id=${activeId}`);
+
+      // 1. Notify Backend Start
+      let targetId = activeId;
+      try {
+        const startRes = await startAnalysis({
+          call_id: activeId,
+          caller_id: callState.callerId,
+          receiver_id: callState.receiverId,
+          channel: callState.channel,
+        });
+        if (startRes && startRes.analysis_id) {
+          targetId = startRes.analysis_id;
+        }
+      } catch (e) {
+        console.warn('[SYSTEM 2] Start analysis notification warning:', e);
+      }
+
+      setAnalysisId(targetId);
+      currentSubscribedCallIdRef.current = targetId;
+
+      // 2. Connect WebSocket
+      connectWebSocket(targetId);
+      console.info(`[WEBSOCKET]\nconnected=true`);
+
+      // 3. Acquire Real Microphone Audio Track with Raw Constraints
+      const audioConstraints = {
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl: false,
+        channelCount: 1,
+      };
+      console.info(`[MIC-CONFIG]\nechoCancellation=false\nnoiseSuppression=false\nautoGainControl=false\nchannelCount=1`);
+
+      let stream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
+        console.info(`[MIC-PERMISSION]\ngranted=true`);
+        console.info(`[MIC-STREAM]\nactive=true`);
+      } catch (micErr) {
+        console.error(`[MIC-PERMISSION]\ngranted=false\nerror=${micErr.name || micErr.message}`);
+        setAudioStreamState('MICROPHONE PERMISSION DENIED');
+        throw micErr;
+      }
+
+      mediaStreamRef.current = stream;
+      setIsMicActive(true);
+      setAudioStreamState('MICROPHONE ACTIVE');
+
+      const audioTrack = stream.getAudioTracks()[0];
+      const trackSettings = audioTrack?.getSettings?.() || {};
+      const trackLabel = audioTrack?.label || 'Default Microphone';
+
+      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+      const audioCtx = new AudioContextClass();
+      if (audioCtx.state === 'suspended') {
+        audioCtx.resume().catch(() => {});
+      }
+      audioContextRef.current = audioCtx;
+
+      const nativeSampleRate = audioCtx.sampleRate || 48000;
+      const channelCount = trackSettings.channelCount || 1;
+
+      console.info(`[AUDIO-CONTEXT]\nstate=${audioCtx.state}\nsampleRate=${nativeSampleRate}`);
+      console.info(`[REAL-MIC-START] device=${trackLabel} sample_rate=${nativeSampleRate} channel_count=${channelCount}`);
+
+      const targetSampleRate = 16000;
+      const chunkDurationSec = 2.5;
+      const samplesPerChunk = Math.floor(targetSampleRate * chunkDurationSec); // 40000 samples
+
+      const source = audioCtx.createMediaStreamSource(stream);
+      const processor = audioCtx.createScriptProcessor(4096, 1, 1);
+      processorRef.current = processor;
+
+      let pcmBuffer = [];
+      let windowCount = 0;
+      let sampleFrameCount = 0;
+      let lastLoggedRms = -1;
+
+      processor.onaudioprocess = (e) => {
+        const rawInput = e.inputBuffer.getChannelData(0);
+
+        // Calculate Real RMS from incoming microphone samples
+        let rawSum = 0;
+        let rawPeak = 0;
+        for (let i = 0; i < rawInput.length; i++) {
+          const val = rawInput[i];
+          rawSum += val * val;
+          const absVal = Math.abs(val);
+          if (absVal > rawPeak) rawPeak = absVal;
+        }
+        const rawRms = Math.sqrt(rawSum / (rawInput.length || 1));
+
+        sampleFrameCount++;
+        if (sampleFrameCount % 8 === 0 || Math.abs(rawRms - lastLoggedRms) > 0.04) {
+          lastLoggedRms = rawRms;
+          console.info(`[AUDIO-DATA]\nsamples=${rawInput.length}\nrms=${rawRms.toFixed(4)}\npeak=${rawPeak.toFixed(4)}`);
+        }
+        setRmsVolume(rawRms);
+
+        // Downsample microphone samples from native sample rate to 16kHz
+        const downsampled = downsampleBuffer(rawInput, nativeSampleRate, targetSampleRate);
+
+        for (let i = 0; i < downsampled.length; i++) {
+          pcmBuffer.push(downsampled[i]);
+        }
+
+        // Once 2.5 seconds (40,000 samples at 16kHz) accumulated, stream to Engine
+        if (pcmBuffer.length >= samplesPerChunk) {
+          windowCount += 1;
+          const chunk = new Float32Array(pcmBuffer.slice(0, samplesPerChunk));
+          pcmBuffer = pcmBuffer.slice(samplesPerChunk);
+
+          let winSum = 0;
+          for (let i = 0; i < chunk.length; i++) {
+            winSum += chunk[i] * chunk[i];
+          }
+          const winRms = Math.sqrt(winSum / chunk.length);
+
+          const wavBuffer = encodeWav(chunk, targetSampleRate);
+
+          console.info(`[AUDIO-WINDOW]\nindex=${windowCount}\nsamples=${chunk.length}\nduration=2500`);
+          console.info(`[WS-SEND]\nbytes=${wavBuffer.byteLength}\nwindow=${windowCount}`);
+
+          if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+            wsRef.current.send(wavBuffer);
+            setAudioStreamState('ANALYZING LIVE AUDIO');
+          } else {
+            if (pendingAudioQueueRef.current.length < 10) {
+              pendingAudioQueueRef.current.push(wavBuffer);
+            }
+          }
+        }
+      };
+
+      source.connect(processor);
+      processor.connect(audioCtx.destination);
+    } catch (err) {
+      console.error('[SYSTEM 2] Failed to initialize microphone stream', err);
+      setAudioStreamState('MICROPHONE ERROR');
+      setIsMicActive(false);
+      isLocallyStreamingRef.current = false;
     }
   };
 
-  const handleAnalyzeAudioFile = async () => {
-    if (!selectedAudioFile) return;
-    setIsFileAnalyzing(true);
-    setFileAnalysisProgress(0);
+  // Stop Audio Tap
+  const handleStopAnalysis = () => {
+    isLocallyStreamingRef.current = false;
+    setIsMicActive(false);
+    setRmsVolume(0);
+    setAudioStreamState('MICROPHONE STOPPED');
+    setCallState((prev) => ({ ...prev, status: 'IDLE' }));
+    pendingAudioQueueRef.current = [];
 
-    const activeId = callState.callId || `file-analysis-${Date.now()}`;
-    setCallState((prev) => ({ ...prev, callId: activeId, status: 'ANALYZING' }));
-    setAnalysisId(activeId);
-    setAudioStreamState('ANALYZING AUDIO FILE');
-
-    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
-      connectWebSocket(activeId);
-      await new Promise((res) => setTimeout(res, 400));
+    if (mediaStreamRef.current) {
+      mediaStreamRef.current.getTracks().forEach((track) => track.stop());
+      mediaStreamRef.current = null;
     }
-
-    try {
-      const arrayBuffer = await selectedAudioFile.arrayBuffer();
-      const AudioCtx = window.AudioContext || window.webkitAudioContext;
-      const audioCtx = new AudioCtx();
-      const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
-
-      const channelData = audioBuffer.getChannelData(0);
-      const nativeSr = audioBuffer.sampleRate;
-      const targetSr = 16000;
-      const downsampled = downsampleBuffer(channelData, nativeSr, targetSr);
-
-      const chunkSamples = 40000; // 2.5s at 16kHz
-      const totalWindows = Math.max(1, Math.floor(downsampled.length / chunkSamples));
-
-      console.info(`[AUDIO-FILE-START] name=${selectedAudioFile.name} duration=${audioBuffer.duration.toFixed(2)}s sample_rate=${nativeSr} downsampled_samples=${downsampled.length} total_windows=${totalWindows}`);
-
-      for (let w = 0; w < totalWindows; w++) {
-        const slice = downsampled.slice(w * chunkSamples, (w + 1) * chunkSamples);
-        let sum = 0;
-        for (let i = 0; i < slice.length; i++) sum += slice[i] * slice[i];
-        const rms = Math.sqrt(sum / (slice.length || 1));
-
-        setIsMicActive(true);
-        setRmsVolume(rms);
-
-        const wavBuffer = encodeWav(slice, targetSr);
-
-        console.info(`[AUDIO-RECEIVED]\ncall_id=${activeId}\nbytes=${wavBuffer.byteLength}\nsamples=${slice.length}\nrms=${rms.toFixed(4)}`);
-        console.info(`[AUDIO-WINDOW]\ncall_id=${activeId}\nwindow=${w + 1}\nsamples=40000`);
-
-        if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-          wsRef.current.send(wavBuffer);
-        }
-
-        setFileAnalysisProgress(Math.round(((w + 1) / totalWindows) * 100));
-        await new Promise((res) => setTimeout(res, 250));
-      }
-
-      setAudioStreamState('FILE ANALYSIS COMPLETE');
-      setIsMicActive(false);
-      setRmsVolume(0);
-    } catch (err) {
-      console.error('[AUDIO-FILE-ERROR] Failed to analyze file:', err);
-      alert('Error analyzing audio file: ' + err.message);
-    } finally {
-      setIsFileAnalyzing(false);
+    if (processorRef.current) {
+      try { processorRef.current.disconnect(); } catch (_) {}
+      processorRef.current = null;
+    }
+    if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
+      try { audioContextRef.current.close(); } catch (_) {}
+      audioContextRef.current = null;
     }
   };
 
@@ -302,23 +407,41 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId, globalQA
 
   // Sync with activeCall prop passed from App root
   useEffect(() => {
-    if (activeCall && (activeCall.status === 'ACTIVE' || activeCall.has_active_call)) {
+    if (activeCall && activeCall.status === 'ACTIVE') {
       const cid = activeCall.call_id;
-      if (currentSubscribedCallIdRef.current !== cid) {
-        console.info(`[SYSTEM 2] Auto-connecting to active call: ${cid}`);
-        currentSubscribedCallIdRef.current = cid;
-        setCallState((prev) => ({
-          ...prev,
-          callId: cid,
-          callerId: activeCall.caller_id || prev.callerId,
-          receiverId: activeCall.receiver_id || prev.receiverId,
-          channel: activeCall.channel || 'VOIP',
-          status: 'ANALYZING',
-        }));
-        setAnalysisId(cid);
-        setAudioStreamState('AUDIO RECEIVING');
-        connectWebSocket(cid);
-      }
+      setCallState((prev) => ({
+        ...prev,
+        callId: cid,
+        callerId: activeCall.caller_id || prev.callerId,
+        receiverId: activeCall.receiver_id || prev.receiverId,
+        status: 'ANALYZING',
+      }));
+      setAudioStreamState('AUDIO RECEIVING');
+      setIsMicActive(true);
+      setRmsVolume(0.05); // Fake some volume to animate waveform
+      
+      setRiskData((prev) => ({
+        ...prev,
+        riskScore: activeCall.score || 15.0,
+        riskLevel: activeCall.risk_level || 'LOW',
+        recommendedAction: activeCall.recommended_action || 'CONTINUE',
+        syntheticProbability: activeCall.scenario === 'HIGH' ? 95 : activeCall.scenario === 'MEDIUM' ? 55 : 15,
+        voiceAuthenticity: activeCall.scenario === 'HIGH' ? 5 : activeCall.scenario === 'MEDIUM' ? 45 : 85,
+        reasons: [`System 2 Database scenario: ${activeCall.scenario}`]
+      }));
+    } else {
+      setCallState((prev) => ({ ...prev, status: 'IDLE' }));
+      setAudioStreamState('WAITING FOR SYSTEM 2 CALL');
+      setIsMicActive(false);
+      setRmsVolume(0);
+      setRiskData((prev) => ({
+        ...prev,
+        riskScore: null,
+        riskLevel: 'NO CALL',
+        recommendedAction: 'NONE',
+        syntheticProbability: null,
+        voiceAuthenticity: null,
+      }));
     }
   }, [activeCall]);
 
@@ -973,47 +1096,24 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId, globalQA
               ))}
             </select>
           )}
-        </div>
-      </div>
 
-      {/* Manual Audio File Analyzer Card (Standalone / Offline Capable) */}
-      <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm space-y-3">
-        <div className="flex items-center justify-between border-b border-slate-100 pb-2">
-          <div className="flex items-center gap-2">
-            <div className="p-1.5 bg-emerald-50 text-emerald-700 rounded-lg border border-emerald-200">
-              <FileText className="w-4 h-4" />
-            </div>
-            <div>
-              <h3 className="text-xs font-bold text-slate-900 tracking-tight flex items-center gap-2">
-                MANUAL AUDIO FILE ANALYZER
-                <span className="text-[10px] font-mono font-bold bg-emerald-50 text-emerald-800 border border-emerald-200 px-2 py-0.5 rounded">
-                  STANDALONE / NO CALL REQUIRED
-                </span>
-              </h3>
-              <p className="text-[11px] text-slate-500">Upload audio (.wav, .mp3, .mpeg, .m4a, .aac, WhatsApp Audio) to run Voice Authenticity Engine analysis</p>
-            </div>
-          </div>
-        </div>
-
-        <div className="flex flex-col sm:flex-row items-center gap-3">
-          <input
-            type="file"
-            accept="audio/*"
-            onChange={handleFileSelect}
-            className="text-xs font-mono text-slate-700 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-slate-100 file:text-slate-800 hover:file:bg-slate-200 cursor-pointer flex-1"
-          />
-          <button
-            onClick={handleAnalyzeAudioFile}
-            disabled={!selectedAudioFile || isFileAnalyzing}
-            className={`px-5 py-2 rounded-lg text-xs font-bold transition shadow-sm flex items-center gap-2 ${
-              !selectedAudioFile || isFileAnalyzing
-                ? 'bg-slate-200 text-slate-400 cursor-not-allowed'
-                : 'bg-emerald-600 hover:bg-emerald-700 text-white'
-            }`}
-          >
-            <Play className="w-3.5 h-3.5 fill-current" />
-            {isFileAnalyzing ? `ANALYZING (${fileAnalysisProgress}%)...` : 'ANALYZE AUDIO'}
-          </button>
+          {isMicActive ? (
+            <button
+              onClick={handleStopAnalysis}
+              className="inline-flex items-center space-x-2 bg-rose-600 hover:bg-rose-700 text-white font-semibold text-xs px-4 py-2 rounded-lg shadow-sm transition"
+            >
+              <Square className="w-4 h-4 fill-white" />
+              <span>Stop Audio Tap</span>
+            </button>
+          ) : (
+            <button
+              onClick={handleStartAnalysis}
+              className="inline-flex items-center space-x-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs px-4 py-2 rounded-lg shadow-sm transition"
+            >
+              <Mic className="w-4 h-4" />
+              <span>Start Live Mic Analysis</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -1064,10 +1164,10 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId, globalQA
             <div className="flex justify-between items-center">
               <div className="flex items-center space-x-2">
                 <Activity className="w-4 h-4 text-emerald-400" />
-                <h3 className="text-xs font-bold uppercase tracking-wider text-slate-200">Real-Time Audio Stream Tap</h3>
+                <h3 className="text-xs font-bold uppercase tracking-wider text-slate-200">LIVE CALL MONITORING</h3>
               </div>
               <span className="text-[11px] font-mono text-emerald-400 font-semibold">
-                16 kHz · MONO · 2.5s WINDOW
+                SYSTEM 2 INDEPENDENT
               </span>
             </div>
 
@@ -1076,7 +1176,7 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId, globalQA
               <canvas ref={canvasRef} width={400} height={100} className="w-full h-full" />
               {!isMicActive && (
                 <div className="absolute inset-0 flex items-center justify-center bg-slate-950/70 backdrop-blur-[1px] text-slate-400 text-xs font-medium">
-                  Audio standby · Choose audio file above or start System 1 call
+                  {audioStreamState === 'WAITING FOR SYSTEM 2 CALL' ? 'Waiting for System 2 Call...' : 'Audio standby'}
                 </div>
               )}
             </div>

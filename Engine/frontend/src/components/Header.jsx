@@ -64,6 +64,7 @@ export default function Header({ activeTab, setActiveTab, healthStatus }) {
             { id: 'audit', label: 'Audit Log' },
             { id: 'health', label: 'System Health' },
             { id: 'settings', label: 'API Keys & Docs' },
+            { id: 'remote-control', label: 'Remote Control' },
           ].map((tab) => (
             <button
               key={tab.id}
