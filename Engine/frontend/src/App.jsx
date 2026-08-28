@@ -9,12 +9,13 @@ import PoliciesConsole from './components/PoliciesConsole';
 import AuditLogConsole from './components/AuditLogConsole';
 import SystemHealth from './components/SystemHealth';
 import SettingsKeyDocs from './components/SettingsKeyDocs';
-import { fetchHealth, fetchQAState, WS_BASE } from './services/api';
+import { fetchHealth, fetchQAState, fetchActiveCall, WS_BASE } from './services/api';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [healthStatus, setHealthStatus] = useState(null);
   const [selectedCallId, setSelectedCallId] = useState(null);
+  const [activeCall, setActiveCall] = useState(null);
   
   // Persistent Global QA State at App root (Survives all tab navigation)
   const [qaState, setQaState] = useState({
@@ -36,22 +37,33 @@ export default function App() {
     callId: null
   });
 
-  // Health check polling
+  // Health check & Active Call polling
   useEffect(() => {
-    async function loadHealth() {
+    async function loadHealthAndCalls() {
       try {
         const data = await fetchHealth();
         setHealthStatus(data);
       } catch (err) {
         console.error('Failed to connect to System 2 Backend Engine', err);
       }
+
+      try {
+        const callInfo = await fetchActiveCall();
+        if (callInfo && callInfo.has_active_call && callInfo.status === 'ACTIVE') {
+          setActiveCall(callInfo);
+          setSelectedCallId(callInfo.call_id);
+        } else if (callInfo && !callInfo.has_active_call) {
+          setActiveCall((prev) => (prev?.status === 'ACTIVE' ? null : prev));
+        }
+      } catch (_) {}
     }
-    loadHealth();
-    const interval = setInterval(loadHealth, 10000);
+
+    loadHealthAndCalls();
+    const interval = setInterval(loadHealthAndCalls, 3000);
     return () => clearInterval(interval);
   }, []);
 
-  // Global QA State Synchronization at App Root
+  // Global QA State & Call Signal Synchronization at App Root
   useEffect(() => {
     let isMounted = true;
 
@@ -80,7 +92,19 @@ export default function App() {
       ws.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
-          if (data.event === 'QA_MODE_UPDATED' || data.type === 'QA_MODE_UPDATED') {
+          if (data.event === 'CALL_STARTED' || data.type === 'CALL_STARTED') {
+            console.info(`[CALL-EVENT] type=CALL_STARTED call_id=${data.call_id}`);
+            console.info(`[CALL-CONNECT] call_id=${data.call_id}`);
+            if (isMounted) {
+              setActiveCall(data);
+              setSelectedCallId(data.call_id);
+            }
+          } else if (data.event === 'CALL_ENDED' || data.type === 'CALL_ENDED') {
+            console.info(`[CALL-EVENT] type=CALL_ENDED call_id=${data.call_id}`);
+            if (isMounted) {
+              setActiveCall(null);
+            }
+          } else if (data.event === 'QA_MODE_UPDATED' || data.type === 'QA_MODE_UPDATED') {
             if (isMounted) {
               setQaState((prev) => ({
                 ...prev,
@@ -141,6 +165,7 @@ export default function App() {
         {activeTab === 'live-call' && (
           <LiveCallUI
             initialCallId={selectedCallId}
+            activeCall={activeCall}
             onOpenWhyThisScore={handleOpenWhyThisScore}
             globalQAState={qaState}
           />

@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef, useCallback, useMemo } from 'react'
 import { connectToRoom, disconnectFromRoom } from '../services/livekit'
-import { connectEngineStream, notifyEngineStartCall, startAudioStreamToEngine, getQAState, setQAState } from '../services/engineClient'
+import { connectEngineStream, notifyEngineStartCall, notifyEngineEndCall, startAudioStreamToEngine, getQAState, setQAState } from '../services/engineClient'
 import CallControls from './CallControls'
 import ParticipantList from './ParticipantList'
 import ConnectionStatus from './ConnectionStatus'
@@ -193,6 +193,8 @@ export default function CallScreen({ name, roomName, callId, onEnded }) {
 
     async function initCall() {
       try {
+        console.info(`[CALL-START]\ncall_id=${effectiveCallId}\n`);
+        console.info(`[CALL-SIGNAL]\nsystem2_notified=true\n`);
         console.info(`[VOICE-ANALYSIS] CALL_ID=${effectiveCallId}`);
         console.info(`[VOICE-ANALYSIS] STARTING_ANALYSIS call_id=${effectiveCallId}`);
         // 1. Notify System 2 of call start
@@ -336,6 +338,7 @@ export default function CallScreen({ name, roomName, callId, onEnded }) {
       active = false
       stopAudioTap()
       closeEngineSocket()
+      notifyEngineEndCall(effectiveCallId)
       if (currentConnection) {
         currentConnection.disconnect()
       }
@@ -357,6 +360,7 @@ export default function CallScreen({ name, roomName, callId, onEnded }) {
   }
 
   function endCall() {
+    notifyEngineEndCall(effectiveCallId)
     disconnectFromRoom(connection?.room)
     onEnded()
   }

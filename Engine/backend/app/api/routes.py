@@ -148,11 +148,13 @@ async def start_analysis(req: AnalysisStartRequest, db: AsyncSession = Depends(g
             receiver_id=req.receiver_id,
             organization_id=req.organization_id,
             channel=req.channel,
-            status="ACTIVE"
+            status="ACTIVE",
+            ended_at=None
         )
         db.add(call_obj)
     else:
         call_obj.status = "ACTIVE"
+        call_obj.ended_at = None
         call_obj.caller_id = req.caller_id
         call_obj.receiver_id = req.receiver_id
 
@@ -190,7 +192,107 @@ async def start_analysis(req: AnalysisStartRequest, db: AsyncSession = Depends(g
     db.add(audit)
     await db.commit()
 
+    # Broadcast CALL_STARTED to all connected System 2 clients
+    from app.api.websocket import manager
+    await manager.broadcast_all({
+        "event": "CALL_STARTED",
+        "type": "CALL_STARTED",
+        "call_id": req.call_id,
+        "analysis_id": session_obj.id,
+        "caller_id": req.caller_id,
+        "caller": req.caller_id,
+        "receiver_id": req.receiver_id,
+        "receiver": req.receiver_id,
+        "channel": req.channel,
+        "status": "ACTIVE"
+    })
+    print(f"[CALL-SIGNAL] system2_notified=true call_id={req.call_id}")
+
     return AnalysisStartResponse(analysis_id=session_obj.id, status="STARTED")
+
+@router.post("/calls/start", response_model=AnalysisStartResponse)
+async def start_call_endpoint(req: AnalysisStartRequest, db: AsyncSession = Depends(get_db)):
+    """
+    Alias for start_analysis. Called by System 1 when a call starts.
+    """
+    return await start_analysis(req, db)
+
+@router.get("/calls/active")
+async def get_active_call(db: AsyncSession = Depends(get_db)):
+    """
+    Returns the currently active call session if one is in progress.
+    """
+    call_res = await db.execute(
+        select(Call).where(Call.status == "ACTIVE", Call.ended_at.is_(None)).order_by(Call.created_at.desc())
+    )
+    call_obj = call_res.scalars().first()
+    if not call_obj:
+        return {
+            "has_active_call": False,
+            "status": "IDLE"
+        }
+
+    session_res = await db.execute(
+        select(AnalysisSession).where(AnalysisSession.call_id == call_obj.id)
+    )
+    session_obj = session_res.scalars().first()
+
+    return {
+        "has_active_call": True,
+        "call_id": call_obj.id,
+        "analysis_id": session_obj.id if session_obj else call_obj.id,
+        "caller_id": call_obj.caller_id,
+        "receiver_id": call_obj.receiver_id,
+        "channel": call_obj.channel,
+        "status": "ACTIVE",
+        "created_at": call_obj.created_at.isoformat() if call_obj.created_at else None
+    }
+
+@router.post("/calls/{call_id}/end")
+async def end_call_endpoint(call_id: str, db: AsyncSession = Depends(get_db)):
+    """
+    Marks the call as ENDED and broadcasts CALL_ENDED to all System 2 clients.
+    """
+    now = datetime.utcnow()
+    call_res = await db.execute(select(Call).where(Call.id == call_id))
+    call_obj = call_res.scalars().first()
+    if call_obj:
+        call_obj.status = "ENDED"
+        call_obj.ended_at = now
+
+    # Also mark all active calls as ended if specific call ended
+    active_res = await db.execute(select(Call).where(Call.status == "ACTIVE"))
+    for c in active_res.scalars().all():
+        c.status = "ENDED"
+        c.ended_at = now
+
+    session_res = await db.execute(
+        select(AnalysisSession).where((AnalysisSession.id == call_id) | (AnalysisSession.call_id == call_id))
+    )
+    sessions = session_res.scalars().all()
+    for s in sessions:
+        s.status = "COMPLETED"
+
+    audit = AuditLog(
+        call_id=call_id,
+        analysis_id=call_id,
+        event_type="CALL_ENDED",
+        actor="SYSTEM1_API",
+        details={"status": "ENDED"}
+    )
+    db.add(audit)
+    await db.commit()
+
+    from app.api.websocket import manager
+    await manager.broadcast_all({
+        "event": "CALL_ENDED",
+        "type": "CALL_ENDED",
+        "call_id": call_id,
+        "analysis_id": call_id,
+        "status": "ENDED"
+    })
+    print(f"[CALL-END] call_id={call_id}")
+    return {"status": "SUCCESS", "call_id": call_id, "call_status": "ENDED"}
 
 @router.get("/analysis/{analysis_id}/risk", response_model=RiskScoreResponse)
 async def get_analysis_risk(analysis_id: str, db: AsyncSession = Depends(get_db)):

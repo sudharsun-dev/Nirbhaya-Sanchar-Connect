@@ -82,22 +82,24 @@ function encodeWav(samples, sampleRate = 16000) {
   return buffer;
 }
 
-export default function LiveCallUI({ onOpenWhyThisScore, initialCallId, globalQAState }) {
+export default function LiveCallUI({ onOpenWhyThisScore, initialCallId, globalQAState, activeCall }) {
   const [callState, setCallState] = useState({
-    callId: initialCallId || `nirbhaya-call-${Date.now().toString(36)}`,
-    callerName: 'Official Caller',
-    callerId: 'officer@sanchar.gov.in',
-    receiverId: 'analyst@sanchar.gov.in',
-    channel: 'VOIP',
+    callId: activeCall?.call_id || initialCallId || `nirbhaya-call-${Date.now().toString(36)}`,
+    callerName: activeCall?.caller_id || 'Official Caller',
+    callerId: activeCall?.caller_id || 'officer@sanchar.gov.in',
+    receiverId: activeCall?.receiver_id || 'analyst@sanchar.gov.in',
+    channel: activeCall?.channel || 'VOIP',
     durationSec: 0,
-    status: initialCallId ? 'ANALYZING' : 'IDLE', // IDLE, CONNECTED, ANALYZING
+    status: (activeCall?.status === 'ACTIVE' || initialCallId) ? 'ANALYZING' : 'IDLE',
   });
 
   const [availableCalls, setAvailableCalls] = useState([]);
-  const [audioStreamState, setAudioStreamState] = useState(initialCallId ? 'AUDIO RECEIVING' : 'WAITING FOR AUDIO');
+  const [audioStreamState, setAudioStreamState] = useState(
+    (activeCall?.status === 'ACTIVE' || initialCallId) ? 'AUDIO RECEIVING' : 'WAITING FOR AUDIO'
+  );
   const [isMicActive, setIsMicActive] = useState(false);
   const [rmsVolume, setRmsVolume] = useState(0);
-  const [analysisId, setAnalysisId] = useState(initialCallId || null);
+  const [analysisId, setAnalysisId] = useState(activeCall?.call_id || initialCallId || null);
 
   // Global QA Simulation Test State (Synchronized with Root App & Backend Database)
   const [qaState, setQaState] = useState(globalQAState || { enabled: false, scenario: 'HIGH' });
@@ -194,6 +196,28 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId, globalQA
     }
   }, [globalQAState, getSimulatedDataForScenario]);
 
+  // Sync with activeCall prop passed from App root
+  useEffect(() => {
+    if (activeCall && (activeCall.status === 'ACTIVE' || activeCall.has_active_call)) {
+      const cid = activeCall.call_id;
+      if (currentSubscribedCallIdRef.current !== cid) {
+        console.info(`[SYSTEM 2] Auto-connecting to active call: ${cid}`);
+        currentSubscribedCallIdRef.current = cid;
+        setCallState((prev) => ({
+          ...prev,
+          callId: cid,
+          callerId: activeCall.caller_id || prev.callerId,
+          receiverId: activeCall.receiver_id || prev.receiverId,
+          channel: activeCall.channel || 'VOIP',
+          status: 'ANALYZING',
+        }));
+        setAnalysisId(cid);
+        setAudioStreamState('AUDIO RECEIVING');
+        connectWebSocket(cid);
+      }
+    }
+  }, [activeCall]);
+
   // Periodic & initial fetch of global QA state (resilient fallback alongside WebSocket)
   useEffect(() => {
     let mounted = true;
@@ -269,7 +293,7 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId, globalQA
     const wsBase = resolveWsBase();
     const wsUrl = `${wsBase}/analysis/${targetId}`;
     console.info(`[SYSTEM 2] Connecting to WebSocket: ${wsUrl} for call_id=${targetId}`);
-    setAudioStreamState('CONNECTING');
+    setAudioStreamState('AUDIO RECEIVING');
     setPipelineState((p) => ({ ...p, s1ToS2: 'PASS', s2Receive: 'PASS' }));
 
     const socket = new WebSocket(wsUrl);
@@ -302,8 +326,29 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId, globalQA
         if (data.event === 'ANALYSIS_STARTED') {
           setAudioStreamState('AUDIO RECEIVING');
           setPipelineState((p) => ({ ...p, resembleReady: 'PASS' }));
+        } else if (data.event === 'CALL_STARTED' || data.type === 'CALL_STARTED') {
+          console.info(`[CALL-EVENT] type=CALL_STARTED call_id=${data.call_id}`);
+          console.info(`[CALL-CONNECT] call_id=${data.call_id}`);
+          setCallState((prev) => ({
+            ...prev,
+            callId: data.call_id,
+            callerId: data.caller_id || prev.callerId,
+            receiverId: data.receiver_id || prev.receiverId,
+            channel: data.channel || 'VOIP',
+            status: 'ANALYZING',
+          }));
+          setAnalysisId(data.call_id);
+          setAudioStreamState('AUDIO RECEIVING');
+        } else if (data.event === 'CALL_ENDED' || data.type === 'CALL_ENDED') {
+          console.info(`[CALL-EVENT] type=CALL_ENDED call_id=${data.call_id}`);
+          setCallState((prev) => ({ ...prev, status: 'ENDED' }));
+          setAudioStreamState('CALL ENDED');
+          setIsMicActive(false);
+          setRmsVolume(0);
         } else if (data.event === 'AUDIO_PROCESSED') {
-          setAudioStreamState('ANALYZING AUDIO');
+          setAudioStreamState('AUDIO RECEIVING');
+          setIsMicActive(true);
+          setRmsVolume(data.rms_energy || 0.08);
           setPipelineState((p) => ({ ...p, s2Receive: 'PASS', resembleReady: 'PASS' }));
           setRiskData((prev) => ({
             ...prev,
@@ -318,7 +363,8 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId, globalQA
           const resembleBlock = data.resemble || {};
           const isNoVoice = !isSimulated && (data.risk_level === 'NO_VOICE' || resembleBlock.status === 'NO_VOICE');
 
-          setAudioStreamState(isNoVoice ? 'NO VOICE DETECTED' : 'ANALYSIS READY');
+          setAudioStreamState('AUDIO RECEIVING');
+          setIsMicActive(true);
           setPipelineState((p) => ({
             ...p,
             resembleConnect: 'PASS',
@@ -433,11 +479,11 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId, globalQA
   }, []);
 
   useEffect(() => {
-    const targetId = initialCallId || callState.callId;
-    if (!wsRef.current) {
+    const targetId = activeCall?.call_id || initialCallId || callState.callId;
+    if (!wsRef.current && targetId) {
       connectWebSocket(targetId);
     }
-  }, [connectWebSocket, initialCallId, callState.callId]);
+  }, [connectWebSocket, initialCallId, callState.callId, activeCall]);
 
   // Auto-subscribe to active call from backend (only when not actively streaming locally)
   useEffect(() => {
@@ -445,6 +491,27 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId, globalQA
 
     async function syncActiveCalls() {
       try {
+        const activeCallRes = await fetch(`${API_BASE}/calls/active`).then((r) => r.json()).catch(() => ({ has_active_call: false }));
+        if (!active) return;
+        if (activeCallRes && activeCallRes.has_active_call && activeCallRes.status === 'ACTIVE') {
+          const cid = activeCallRes.call_id;
+          if (currentSubscribedCallIdRef.current !== cid) {
+            currentSubscribedCallIdRef.current = cid;
+            setCallState((prev) => ({
+              ...prev,
+              callId: cid,
+              callerId: activeCallRes.caller_id || prev.callerId,
+              receiverId: activeCallRes.receiver_id || prev.receiverId,
+              channel: activeCallRes.channel || 'VOIP',
+              status: 'ANALYZING',
+            }));
+            setAnalysisId(cid);
+            setAudioStreamState('AUDIO RECEIVING');
+            connectWebSocket(cid);
+          }
+          return;
+        }
+
         const stats = await fetch(`${API_BASE}/dashboard/stats`).then((r) => r.json()).catch(() => ({ recent_calls: [] }));
         if (!active) return;
         const calls = stats.recent_calls || [];
@@ -471,36 +538,18 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId, globalQA
             connectWebSocket(initialCallId);
           }
         } else if (calls.length > 0) {
-          const activeCall = calls.find((c) => c.status === 'ACTIVE' || c.status === 'PROCESSING') || calls[0];
-          if (activeCall && activeCall.call_id !== currentSubscribedCallIdRef.current) {
-            currentSubscribedCallIdRef.current = activeCall.call_id;
+          const activeCallItem = calls.find((c) => c.status === 'ACTIVE' || c.status === 'PROCESSING') || calls[0];
+          if (activeCallItem && activeCallItem.call_id !== currentSubscribedCallIdRef.current) {
+            currentSubscribedCallIdRef.current = activeCallItem.call_id;
             setCallState((prev) => ({
               ...prev,
-              callId: activeCall.call_id,
-              callerId: activeCall.caller_id,
-              receiverId: activeCall.receiver_id,
+              callId: activeCallItem.call_id,
+              callerId: activeCallItem.caller_id,
+              receiverId: activeCallItem.receiver_id,
               status: 'ANALYZING',
             }));
-            setAnalysisId(activeCall.call_id);
-            setRiskData({
-              riskScore: null,
-              riskLevel: null,
-              overallConfidence: null,
-              syntheticProbability: null,
-              voiceAuthenticity: null,
-              speakerSimilarity: null,
-              audioQuality: null,
-              contextScore: null,
-              transactionScore: null,
-              behaviorScore: null,
-              reasons: [],
-              recommendedAction: null,
-              verificationRequired: false,
-              windowsAnalyzed: 0,
-              lastLatencyMs: null,
-            });
-            setEvidenceLog([]);
-            connectWebSocket(activeCall.call_id);
+            setAnalysisId(activeCallItem.call_id);
+            connectWebSocket(activeCallItem.call_id);
           }
         }
       } catch (err) {
@@ -509,7 +558,7 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId, globalQA
     }
 
     syncActiveCalls();
-    const interval = setInterval(syncActiveCalls, 5000);
+    const interval = setInterval(syncActiveCalls, 3000);
 
     return () => {
       active = false;

@@ -206,6 +206,22 @@ export async function notifyEngineStartCall(callPayload) {
 }
 
 /**
+ * Notifies System 2 Engine that a call has ended.
+ */
+export async function notifyEngineEndCall(callId) {
+  if (!callId) return null;
+  const url = `${ENGINE_HTTP_BASE}/calls/${callId}/end`;
+  try {
+    console.info(`[CALL-END] call_id=${callId}`);
+    const res = await fetch(url, { method: 'POST' });
+    if (res.ok) return await res.json();
+  } catch (err) {
+    console.warn('[SYSTEM 1] Unable to notify engine of call end', err);
+  }
+  return null;
+}
+
+/**
  * Downsamples audio buffer from input sample rate (e.g. 48kHz or 44.1kHz) to 16kHz.
  */
 function downsampleBuffer(buffer, inputSampleRate, outputSampleRate = 16000) {

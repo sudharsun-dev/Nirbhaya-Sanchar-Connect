@@ -7,7 +7,7 @@ db_url = settings.async_database_url
 engine = create_async_engine(
     db_url,
     echo=False,
-    connect_args={"check_same_thread": False} if "sqlite" in db_url else {}
+    connect_args={"check_same_thread": False, "timeout": 30.0} if "sqlite" in db_url else {}
 )
 
 # Async session factory

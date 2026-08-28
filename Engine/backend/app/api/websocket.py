@@ -136,7 +136,7 @@ async def websocket_analysis_endpoint(websocket: WebSocket, analysis_id: str = "
                 start_pipeline_time = time.time()
                 window_index += 1
                 
-                print(f"[AUDIO-RECEIVED]\ncall_id={analysis_id}\nbytes={len(audio_bytes)}\nwindow_index={window_index}\n")
+                print(f"[CALL-AUDIO-RECEIVED]\ncall_id={analysis_id}\nbytes={len(audio_bytes)}\nwindow_index={window_index}\n")
 
                 # 1. Audio Preprocessing & VAD (Pure NumPy)
                 try:
@@ -250,7 +250,7 @@ async def websocket_analysis_endpoint(websocket: WebSocket, analysis_id: str = "
                 print(f"[RISK-RESULT]\nrisk_score={risk_score_val}\nrisk_level={risk_level_val}\naction={rec_action}\n")
 
                 # 8. Broadcast AUDIO_PROCESSED
-                await manager.broadcast_event(analysis_id, {
+                audio_proc_payload = {
                     "event": "AUDIO_PROCESSED",
                     "call_id": analysis_id,
                     "analysis_id": analysis_id,
@@ -258,8 +258,10 @@ async def websocket_analysis_endpoint(websocket: WebSocket, analysis_id: str = "
                     "duration_ms": processed_audio["duration_ms"],
                     "speech_detected": processed_audio["speech_detected"],
                     "audio_quality_score": processed_audio["audio_quality_score"],
+                    "rms_energy": rms,
                     "processing_latency_ms": pipeline_latency_ms
-                })
+                }
+                await manager.broadcast_all(audio_proc_payload)
 
                 # 9. Broadcast Authoritative RISK_UPDATED Telemetry
                 is_qa = qa_service.is_enabled()
@@ -307,7 +309,7 @@ async def websocket_analysis_endpoint(websocket: WebSocket, analysis_id: str = "
                 
                 print(f"[WS-SEND]\nevent=RISK_UPDATED\n")
                 print(f"[TELEMETRY-BROADCAST] call_id={analysis_id} window={window_index} risk_score={effective_risk_score} synthetic_probability={effective_synth_prob} risk_level={effective_risk_level} action={effective_action} simulated={is_qa}")
-                await manager.broadcast_event(analysis_id, risk_event_payload)
+                await manager.broadcast_all(risk_event_payload)
 
                 # 10. Broadcast POLICY_UPDATED
                 await manager.broadcast_event(analysis_id, {

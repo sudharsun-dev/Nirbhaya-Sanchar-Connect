@@ -132,3 +132,14 @@ export async function updateQAState(enabled, scenario = 'HIGH') {
   return null;
 }
 
+export async function fetchActiveCall() {
+  try {
+    const res = await fetch(`${API_BASE}/calls/active`);
+    if (res.ok) return await res.json();
+  } catch (err) {
+    console.warn('[SYSTEM 2 API] Fetch active call failed:', err.message);
+  }
+  return { has_active_call: false, status: 'IDLE' };
+}
+
+
