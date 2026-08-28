@@ -146,4 +146,16 @@ export async function fetchActiveCall() {
   return { has_active_call: false, status: 'IDLE' };
 }
 
+export async function fetchQAStatus() {
+  try {
+    const res = await fetch(`${API_BASE}/qa/status`);
+    if (res.ok) return await res.json();
+    return null;
+  } catch (err) {
+    console.warn('[QA API] Fetch status failed:', err.message);
+    return null;
+  }
+}
+
+
 

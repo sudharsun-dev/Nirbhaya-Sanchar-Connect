@@ -321,6 +321,7 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId, globalQA
 
     const wsBase = resolveWsBase();
     const wsUrl = `${wsBase}/analysis/${targetId}`;
+    console.info(`[SYSTEM-2-AUTO-CONNECT]\ncall_id=${targetId}`);
     console.info(`[SYSTEM 2] Connecting to WebSocket: ${wsUrl} for call_id=${targetId}`);
     setAudioStreamState('AUDIO RECEIVING');
     setPipelineState((p) => ({ ...p, s1ToS2: 'PASS', s2Receive: 'PASS' }));
@@ -329,6 +330,7 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId, globalQA
     wsRef.current = socket;
 
     socket.onopen = () => {
+      console.info(`[WS-CONNECTED]\ncall_id=${targetId}`);
       console.info(`[SYSTEM 2] WebSocket connected for session ${targetId}`);
       setAudioStreamState('AUDIO RECEIVING');
       setPipelineState((p) => ({ ...p, s1ToS2: 'PASS', s2Receive: 'PASS', resembleConnect: 'PASS' }));
@@ -391,6 +393,7 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId, globalQA
           setIsMicActive(false);
           setRmsVolume(0);
         } else if (data.event === 'AUDIO_PROCESSED') {
+          console.info(`[AUDIO-RECEIVED]\ncall_id=${targetId}\nbytes=${data.bytes || 0}\nsamples=${data.samples || 0}`);
           setAudioStreamState('AUDIO RECEIVING');
           setIsMicActive(true);
           setRmsVolume(data.rms_energy || 0.08);
@@ -407,6 +410,11 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId, globalQA
           const authScore = data.authenticity_score != null ? data.authenticity_score : (synthProb != null ? Math.max(0, 100 - synthProb) : null);
           const resembleBlock = data.resemble || {};
           const isNoVoice = !isSimulated && (data.risk_level === 'NO_VOICE' || resembleBlock.status === 'NO_VOICE');
+
+          console.info(`[DETECTOR-CALLED]\ncall_id=${targetId}\nwindow=${data.window_index}`);
+          console.info(`[DETECTOR-RESULT]\nsynthetic_probability=${synthProb}\nauthenticity=${authScore}\nconfidence=${data.confidence || data.overall_confidence}\nverdict=${data.label || resembleBlock.label}`);
+          console.info(`[RISK-UPDATED]\ncall_id=${targetId}\nrisk_score=${data.risk_score}`);
+          console.info(`[UI-UPDATED]\ncall_id=${targetId}`);
 
           setAudioStreamState('AUDIO RECEIVING');
           setIsMicActive(true);
@@ -922,24 +930,6 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId, globalQA
               ))}
             </select>
           )}
-
-          {isMicActive ? (
-            <button
-              onClick={handleStopAnalysis}
-              className="inline-flex items-center space-x-2 bg-rose-600 hover:bg-rose-700 text-white font-semibold text-xs px-4 py-2 rounded-lg shadow-sm transition"
-            >
-              <Square className="w-4 h-4 fill-white" />
-              <span>Stop Audio Tap</span>
-            </button>
-          ) : (
-            <button
-              onClick={handleStartAnalysis}
-              className="inline-flex items-center space-x-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs px-4 py-2 rounded-lg shadow-sm transition"
-            >
-              <Mic className="w-4 h-4" />
-              <span>Start Local Mic Tap</span>
-            </button>
-          )}
         </div>
       </div>
 
@@ -1002,7 +992,7 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId, globalQA
               <canvas ref={canvasRef} width={400} height={100} className="w-full h-full" />
               {!isMicActive && (
                 <div className="absolute inset-0 flex items-center justify-center bg-slate-950/70 backdrop-blur-[1px] text-slate-400 text-xs font-medium">
-                  Microphone standby · Click "Start Real Audio Tap"
+                  Awaiting live call stream from System 1...
                 </div>
               )}
             </div>

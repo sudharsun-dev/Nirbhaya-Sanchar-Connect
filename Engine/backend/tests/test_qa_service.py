@@ -250,3 +250,36 @@ def test_new_client_gets_database_state():
         assert msg["risk_level"] == "HIGH"
         assert msg["recommended_action"] == "HOLD"
         assert msg["source"] == "QA_DATABASE"
+
+def test_qa_status_endpoint():
+    """Verify GET /api/v1/qa/status diagnostic endpoint."""
+    client = TestClient(app)
+    client.post("/api/v1/qa/state", json={"enabled": True, "scenario": "HIGH"})
+    res = client.get("/api/v1/qa/status")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["database"] == "connected"
+    assert data["qa_mode"] is True
+    assert data["scenario"] == "HIGH"
+    assert data["score"] == 95.0
+    assert "updated_at" in data
+
+def test_call_analysis_status_endpoint():
+    """Verify GET /api/v1/calls/{call_id}/analysis/status diagnostic endpoint."""
+    client = TestClient(app)
+    call_id = "test_diag_call_100"
+    client.post("/api/v1/calls/start", json={
+        "call_id": call_id,
+        "caller_id": "caller_test",
+        "receiver_id": "receiver_test",
+        "channel": "VOIP"
+    })
+    res = client.get(f"/api/v1/calls/{call_id}/analysis/status")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["call_id"] == call_id
+    assert data["call_status"] == "ACTIVE"
+    assert "audio_connected" in data
+    assert "windows_received" in data
+    assert data["detector_active"] is True
+

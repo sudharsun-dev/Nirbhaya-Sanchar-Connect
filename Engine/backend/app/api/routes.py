@@ -1,6 +1,6 @@
 import uuid
 import httpx
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, status, Request
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -573,4 +573,67 @@ async def set_qa_state(payload: QAModeUpdateRequest):
         "qa_state": updated_state,
         **updated_state
     }
+
+@router.get("/qa/status")
+async def get_qa_status(db: AsyncSession = Depends(get_db)):
+    """
+    Returns diagnostic QA status across database connection, current QA mode, scenario, score, and timestamp.
+    """
+    db_status = "connected"
+    try:
+        await db.execute(select(Call).limit(1))
+    except Exception:
+        db_status = "disconnected"
+
+    await qa_service.load_from_db(db)
+    state = qa_service.get_state()
+    return {
+        "database": db_status,
+        "enabled": state.get("enabled", False),
+        "scenario": state.get("scenario", "LOW"),
+        "score": state.get("score", 15.0),
+        "updated_at": state.get("updated_at", datetime.now(timezone.utc).isoformat())
+    }
+
+@router.get("/calls/{call_id}/analysis/status")
+async def get_call_analysis_status(call_id: str, db: AsyncSession = Depends(get_db)):
+    """
+    Returns real-time analysis pipeline status for a specific call session.
+    """
+    call_res = await db.execute(select(Call).where((Call.id == call_id) | (Call.id == f"nirbhaya-call-{call_id}")))
+    call_obj = call_res.scalars().first()
+    if not call_obj:
+        active_res = await db.execute(select(Call).where(Call.id.like(f"%{call_id}%")))
+        call_obj = active_res.scalars().first()
+
+    call_status = call_obj.status if call_obj else "IDLE"
+
+    windows_res = await db.execute(
+        select(AudioAnalysisWindow).where(
+            (AudioAnalysisWindow.analysis_id == call_id) |
+            (AudioAnalysisWindow.analysis_id == (call_obj.id if call_obj else ""))
+        )
+    )
+    windows = windows_res.scalars().all()
+    windows_count = len(windows)
+    last_window = windows[-1] if windows else None
+    
+    last_analysis_at = (
+        last_window.created_at.isoformat() if (last_window and hasattr(last_window, 'created_at') and last_window.created_at)
+        else (call_obj.created_at.isoformat() if (call_obj and hasattr(call_obj, 'created_at') and call_obj.created_at)
+        else datetime.now(timezone.utc).isoformat())
+    )
+
+    from app.api.websocket import manager
+    is_ws_connected = bool(call_id in manager.active_connections and len(manager.active_connections[call_id]) > 0)
+
+    return {
+        "call_id": call_id,
+        "call_status": call_status,
+        "audio_connected": is_ws_connected or (call_status == "ACTIVE" and windows_count > 0),
+        "windows_received": windows_count,
+        "last_analysis_at": last_analysis_at,
+        "detector_active": True
+    }
+
 

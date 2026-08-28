@@ -119,6 +119,7 @@ async def websocket_analysis_endpoint(websocket: WebSocket, analysis_id: str = "
         "analysis_id": analysis_id,
         "status": "ACTIVE"
     })
+    print(f"[WS-CONNECTED] call_id={analysis_id} client={client_host}")
 
     window_index = 0
 
@@ -135,8 +136,8 @@ async def websocket_analysis_endpoint(websocket: WebSocket, analysis_id: str = "
             if audio_bytes:
                 start_pipeline_time = time.time()
                 window_index += 1
-                
-                print(f"[CALL-AUDIO-RECEIVED]\ncall_id={analysis_id}\nbytes={len(audio_bytes)}\nwindow_index={window_index}\n")
+
+                print(f"[AUDIO-RECEIVED] call_id={analysis_id} bytes={len(audio_bytes)} window={window_index}")
 
                 # 1. Audio Preprocessing & VAD (Pure NumPy)
                 try:
@@ -156,7 +157,7 @@ async def websocket_analysis_endpoint(websocket: WebSocket, analysis_id: str = "
 
                 # 2. Local Voice Authenticity & Deepfake Audio Detection (Free Local Engine)
                 voice_res = None
-                print(f"[DETECTOR-CALL]\ncall_id={analysis_id}\nwindow_index={window_index}\n")
+                print(f"[DETECTOR-CALLED] call_id={analysis_id} window={window_index}")
                 try:
                     voice_res = await voice_detector.send_audio_chunk(
                         call_id=analysis_id,
@@ -178,7 +179,11 @@ async def websocket_analysis_endpoint(websocket: WebSocket, analysis_id: str = "
                         "detail": str(res_err)
                     }
 
-                print(f"[DETECTOR-RESULT]\nsynthetic_probability={voice_res.get('synthetic_probability') if voice_res else None}\nauthenticity={voice_res.get('authenticity_score') if voice_res else None}\nconfidence={voice_res.get('confidence') if voice_res else None}\nverdict={voice_res.get('verdict') if voice_res else None}\n")
+                _sp = voice_res.get('synthetic_probability') if voice_res else None
+                _auth = voice_res.get('authenticity_score') if voice_res else None
+                _conf = voice_res.get('confidence') if voice_res else None
+                _verdict = voice_res.get('verdict') if voice_res else None
+                print(f"[DETECTOR-RESULT] synthetic_probability={_sp} authenticity={_auth} confidence={_conf} verdict={_verdict}")
 
                 # 3. Speaker Verification (Pure NumPy/SciPy)
                 speaker_res = None
@@ -307,8 +312,7 @@ async def websocket_analysis_endpoint(websocket: WebSocket, analysis_id: str = "
                     "qa_scenario": qa_service.get_scenario() if is_qa else None
                 }
                 
-                print(f"[WS-SEND]\nevent=RISK_UPDATED\n")
-                print(f"[TELEMETRY-BROADCAST] call_id={analysis_id} window={window_index} risk_score={effective_risk_score} synthetic_probability={effective_synth_prob} risk_level={effective_risk_level} action={effective_action} simulated={is_qa}")
+                print(f"[RISK-UPDATED] call_id={analysis_id} risk_score={effective_risk_score} risk_level={effective_risk_level} synthetic_probability={effective_synth_prob} window={window_index} simulated={is_qa}")
                 await manager.broadcast_all(risk_event_payload)
 
                 # 10. Broadcast POLICY_UPDATED

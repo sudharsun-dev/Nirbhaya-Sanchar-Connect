@@ -83,7 +83,7 @@ class GlobalQAService:
 
         return self.get_state()
 
-    async def load_from_db(self) -> Dict[str, Any]:
+    async def load_from_db(self, db_session=None) -> Dict[str, Any]:
         """
         Loads the authoritative persistent QA state from the database.
         If no record exists, creates the default row (enabled=False, scenario=LOW).
@@ -94,7 +94,7 @@ class GlobalQAService:
             from app.database.models import QAControlRecord
             from sqlalchemy.future import select
 
-            async with AsyncSessionLocal() as session:
+            async def _perform_load(session):
                 result = await session.execute(
                     select(QAControlRecord).where(QAControlRecord.id == "global_qa")
                 )
@@ -127,11 +127,17 @@ class GlobalQAService:
                     self._scenario = "LOW"
                     self._updated_at = now.isoformat()
                     logger.info("[QA-DB-INIT] Initialized new qa_control record in database: enabled=False scenario=LOW")
+
+            if db_session:
+                await _perform_load(db_session)
+            else:
+                async with AsyncSessionLocal() as session:
+                    await _perform_load(session)
         except Exception as e:
             logger.warning(f"[QA-DB-LOAD] Notice: Could not load QA state from DB: {e}")
         return self.get_state()
 
-    async def sync_to_db(self, enabled: bool, scenario: str):
+    async def sync_to_db(self, enabled: bool, scenario: str, db_session=None):
         """
         Persists authoritative QA control state into the qa_control database table.
         """

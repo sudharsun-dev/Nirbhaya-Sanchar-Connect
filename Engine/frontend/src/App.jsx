@@ -10,9 +10,7 @@ import AuditLogConsole from './components/AuditLogConsole';
 import SystemHealth from './components/SystemHealth';
 import SettingsKeyDocs from './components/SettingsKeyDocs';
 import { fetchHealth, fetchQAState, fetchActiveCall, WS_BASE } from './services/api';
-
-// initGlobalControl is kept for Supabase mode-change subscription (read-only listener)
-import { initGlobalControl } from './services/globalControl';
+import { initQAControl, subscribeToQAChanges } from './services/globalControl';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -20,14 +18,7 @@ export default function App() {
   const [selectedCallId, setSelectedCallId] = useState(null);
   const [activeCall, setActiveCall] = useState(null);
 
-  // Initialize Supabase Global Control on app startup (passive listener only)
-  useEffect(() => {
-    initGlobalControl();
-  }, []);
-
   // Persistent Global QA State at App root — survives ALL tab navigation.
-  // This is initialised to an explicit null-like state; the first successful
-  // database fetch will populate it with the real authoritative values.
   const [qaState, setQaState] = useState({
     enabled: false,
     scenario: 'LOW',
@@ -39,6 +30,25 @@ export default function App() {
     recommended_action: 'CONTINUE',
     source: 'QA_DATABASE',
   });
+
+  // Initialize Supabase Global Control on app startup & subscribe to Realtime
+  useEffect(() => {
+    initQAControl();
+    const unsub = subscribeToQAChanges((qs) => {
+      if (qs) {
+        setQaState((prev) => ({
+          ...prev,
+          enabled: Boolean(qs.enabled),
+          scenario: qs.scenario || 'LOW',
+          score: qs.score ?? (qs.scenario === 'HIGH' ? 95.0 : qs.scenario === 'MEDIUM' ? 55.0 : 15.0),
+          authenticity: qs.enabled ? (qs.scenario === 'HIGH' ? 5.0 : qs.scenario === 'MEDIUM' ? 45.0 : 85.0) : 85.0,
+          risk_level: qs.scenario || 'LOW',
+          recommended_action: qs.scenario === 'HIGH' ? 'HOLD' : qs.scenario === 'MEDIUM' ? 'VERIFY' : 'CONTINUE',
+        }));
+      }
+    });
+    return () => unsub();
+  }, []);
 
   const [whyThisScoreModal, setWhyThisScoreModal] = useState({
     isOpen: false,
@@ -73,29 +83,17 @@ export default function App() {
     return () => clearInterval(interval);
   }, []);
 
-  // Global QA State & Call Signal Synchronization at App Root
+  // Global QA State Initial Load & Persistent App-level WebSocket for global events
   useEffect(() => {
     let isMounted = true;
 
-    const syncQAState = async () => {
-      // fetchQAState returns null on error — do NOT overwrite existing state on null
-      const state = await fetchQAState();
-      if (!isMounted) return;
-      if (state && state.enabled !== undefined) {
-        // Valid state from database — update authoritative QA state
+    // Initial database load from backend API as secondary fallback
+    fetchQAState().then((state) => {
+      if (isMounted && state && state.enabled !== undefined) {
         setQaState(state);
       }
-      // If state is null (network error / backend down) — keep existing state unchanged
-    };
+    });
 
-    // Initial database load
-    syncQAState();
-
-    // 2.5s database polling fallback (guarantees multi-device sync even if WebSocket disconnects)
-    const qaTimer = setInterval(syncQAState, 2500);
-
-    // Persistent App-level WebSocket for global events (CALL_STARTED, CALL_ENDED, QA_MODE_UPDATED)
-    // This stays alive for the lifetime of the app regardless of which tab is active.
     let ws = null;
     let wsReconnectTimer = null;
 
@@ -114,18 +112,17 @@ export default function App() {
             const data = JSON.parse(event.data);
 
             if (data.event === 'CALL_STARTED' || data.type === 'CALL_STARTED') {
-              console.info(`[CALL-EVENT] type=CALL_STARTED call_id=${data.call_id}`);
+              console.info(`[CALL-STARTED]\ncall_id=${data.call_id}`);
               console.info(`[CALL-CONNECT] call_id=${data.call_id}`);
               if (isMounted) {
                 setActiveCall(data);
                 setSelectedCallId(data.call_id);
-                // AUTO-NAVIGATE to Live Analysis so the analyst sees the call immediately
+                // AUTO-NAVIGATE to Live Analysis so analyst sees call immediately
                 setActiveTab('live-call');
               }
             } else if (data.event === 'CALL_ENDED' || data.type === 'CALL_ENDED') {
               console.info(`[CALL-EVENT] type=CALL_ENDED call_id=${data.call_id}`);
               if (isMounted) {
-                // Only clear activeCall if it matches the ended call_id
                 setActiveCall((prev) => {
                   if (!prev) return null;
                   if (prev.call_id === data.call_id) return null;
@@ -133,7 +130,6 @@ export default function App() {
                 });
               }
             } else if (data.event === 'QA_MODE_UPDATED' || data.type === 'QA_MODE_UPDATED') {
-              // Real-time QA mode broadcast from backend — this is the authoritative push channel
               if (isMounted) {
                 setQaState((prev) => ({
                   ...prev,
@@ -158,7 +154,6 @@ export default function App() {
 
         ws.onclose = (ev) => {
           console.info(`[APP-WS] Global events WebSocket closed (code=${ev.code})`);
-          // Auto-reconnect after 3 seconds if app is still mounted
           if (isMounted) {
             wsReconnectTimer = setTimeout(connectAppWs, 3000);
           }
@@ -175,13 +170,13 @@ export default function App() {
 
     return () => {
       isMounted = false;
-      clearInterval(qaTimer);
       clearTimeout(wsReconnectTimer);
       if (ws) {
         try { ws.close(); } catch (_) {}
       }
     };
   }, []);
+
 
   const handleSelectCall = (callId) => {
     setSelectedCallId(callId);

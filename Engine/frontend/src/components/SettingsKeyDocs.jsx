@@ -1,18 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { Key, Shield, FileCode, Lock, BookOpen, Sliders, CheckCircle2, AlertTriangle, Radio } from 'lucide-react';
-import { fetchQAState, updateQAState } from '../services/api';
-
-// Note: globalControl.js / Supabase is NOT used for QA mode writes.
-// The backend database (/qa/state) is the ONLY authoritative source.
-// Backend POST /qa/state broadcasts QA_MODE_UPDATED to all connected browsers.
+import { fetchQAState } from '../services/api';
+import { setQAState } from '../services/globalControl';
 
 export default function SettingsKeyDocs({ globalQAState, onQAStateChange }) {
   const [localQA, setLocalQA] = useState(globalQAState || { enabled: false, scenario: 'LOW' });
   const [saving, setSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
-
-  // No Supabase subscription needed here — App.jsx root WebSocket handles QA_MODE_UPDATED
-  // and passes the updated qaState down as globalQAState prop.
 
   useEffect(() => {
     if (globalQAState) {
@@ -21,8 +15,6 @@ export default function SettingsKeyDocs({ globalQAState, onQAStateChange }) {
   }, [globalQAState]);
 
   useEffect(() => {
-    // Load authoritative QA state from database on mount
-    // fetchQAState returns null on error — only update if we got a real response
     fetchQAState().then((res) => {
       if (res && res.enabled !== undefined) {
         setLocalQA(res);
@@ -41,9 +33,9 @@ export default function SettingsKeyDocs({ globalQAState, onQAStateChange }) {
     console.info(`[QA-CLICK] control=QA_TOGGLE previous_enabled=${qaState.enabled} previous_scenario=${qaState.scenario}`);
     console.info(`[QA-STATE] enabled=${nextEnabled} scenario=${qaState.scenario}`);
     try {
-      const res = await updateQAState(nextEnabled, qaState.scenario);
+      const res = await setQAState(nextEnabled, qaState.scenario || 'LOW');
       if (res && onQAStateChange) {
-        onQAStateChange(res.qa_state || res);
+        onQAStateChange(res);
       }
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 2000);
@@ -62,9 +54,9 @@ export default function SettingsKeyDocs({ globalQAState, onQAStateChange }) {
     console.info(`[QA-CLICK] control=${scenario} previous_enabled=${qaState.enabled} previous_scenario=${qaState.scenario}`);
     console.info(`[QA-STATE] enabled=true scenario=${scenario}`);
     try {
-      const res = await updateQAState(true, scenario);
+      const res = await setQAState(true, scenario);
       if (res && onQAStateChange) {
-        onQAStateChange(res.qa_state || res);
+        onQAStateChange(res);
       }
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 2000);
@@ -109,7 +101,7 @@ export default function SettingsKeyDocs({ globalQAState, onQAStateChange }) {
               {qaState.enabled ? `SIMULATED (${qaState.scenario})` : 'REAL DETECTOR (QA OFF)'}
             </span>
             <span className="text-[10px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 px-2 py-1 rounded-md">
-              GLOBAL / SYNCED
+              SUPABASE DB SYNCED
             </span>
           </div>
         </div>
@@ -124,6 +116,7 @@ export default function SettingsKeyDocs({ globalQAState, onQAStateChange }) {
                 <button
                   type="button"
                   aria-label="Disable QA testing"
+                  disabled={saving}
                   className={`px-4 py-1.5 rounded-md text-xs font-bold transition ${
                     !qaState.enabled
                       ? 'bg-emerald-600 text-white shadow-sm'
@@ -136,6 +129,7 @@ export default function SettingsKeyDocs({ globalQAState, onQAStateChange }) {
                 <button
                   type="button"
                   aria-label="Enable QA testing"
+                  disabled={saving}
                   className={`px-4 py-1.5 rounded-md text-xs font-bold transition ${
                     qaState.enabled
                       ? 'bg-blue-600 text-white shadow-sm'
@@ -161,7 +155,7 @@ export default function SettingsKeyDocs({ globalQAState, onQAStateChange }) {
                     key={sc.id}
                     type="button"
                     aria-label={`Set QA scenario to ${sc.id}`}
-                    disabled={!qaState.enabled}
+                    disabled={!qaState.enabled || saving}
                     className={`px-3 py-1.5 rounded-md text-xs font-bold transition ${
                       !qaState.enabled
                         ? 'opacity-40 cursor-not-allowed text-slate-500'
@@ -180,44 +174,12 @@ export default function SettingsKeyDocs({ globalQAState, onQAStateChange }) {
 
           {saveSuccess && (
             <div className="text-[11px] text-emerald-400 font-mono flex items-center gap-1.5 pt-1">
-              <CheckCircle2 className="w-3.5 h-3.5" /> State successfully saved to database and broadcast to all connected clients!
+              <CheckCircle2 className="w-3.5 h-3.5" /> Saved to Supabase database & broadcast to all connected devices!
             </div>
           )}
-
-          {/* SECRET GLOBAL SYSTEM CONTROL (SUPABASE DATABASE-BACKED) */}
-          <div className="mt-4 pt-4 border-t border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-3 text-slate-300">
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-mono font-bold text-slate-400">SECRET</span>
-              <span className="text-[10px] font-mono text-slate-500 bg-slate-950 border border-slate-800 px-2 py-0.5 rounded">
-                SUPABASE DB
-              </span>
-            </div>
-            <div className="inline-flex rounded-lg bg-slate-950 p-1 border border-slate-800 gap-1">
-              {['REAL', 'LOW', 'MEDIUM', 'HIGH'].map((m) => (
-                <button
-                  key={m}
-                  type="button"
-                  aria-label={`Set global secret mode to ${m}`}
-                  className={`px-3 py-1 rounded text-xs font-mono font-bold transition ${
-                    secretMode === m
-                      ? m === 'REAL'
-                        ? 'bg-emerald-600 text-white shadow-sm font-extrabold'
-                        : m === 'LOW'
-                        ? 'bg-emerald-500 text-white shadow-sm font-extrabold'
-                        : m === 'MEDIUM'
-                        ? 'bg-amber-500 text-white shadow-sm font-extrabold'
-                        : 'bg-rose-600 text-white shadow-sm font-extrabold'
-                      : 'text-slate-400 hover:text-slate-200'
-                  }`}
-                  onClick={() => handleSecretSelect(m)}
-                >
-                  {m}
-                </button>
-              ))}
-            </div>
-          </div>
         </div>
       </div>
+
 
       {/* 2. QA TEST CONTROLS DOCUMENTATION & SPECIFICATION */}
       <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm space-y-6">
