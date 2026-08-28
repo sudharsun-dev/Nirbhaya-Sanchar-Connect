@@ -99,7 +99,7 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId }) {
   const [rmsVolume, setRmsVolume] = useState(0);
   const [analysisId, setAnalysisId] = useState(initialCallId || null);
 
-  // Real AI Outputs from backend Resemble AI streaming detector
+  // Real AI Outputs from backend voice authenticity streaming detector
   const [riskData, setRiskData] = useState({
     riskScore: null,
     riskLevel: null, // null until real risk received
@@ -253,7 +253,7 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId }) {
               timestamp: new Date().toLocaleTimeString(),
               callId: targetId,
               windowIndex: data.window_index || prev.length + 1,
-              detector: 'RESEMBLE AI',
+              detector: 'VOICE AUTHENTICITY ENGINE',
               syntheticProbability: data.synthetic_probability,
               authenticityScore: authScore,
               label: resembleBlock.label || (data.synthetic_probability != null ? (data.synthetic_probability >= 50 ? 'FAKE' : 'REAL') : (isNoVoice ? 'NO VOICE' : '—')),
@@ -835,15 +835,15 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId }) {
             )}
           </div>
 
-          {/* RESEMBLE AI & DIAGNOSTIC PIPELINE SECTION */}
+          {/* VOICE AUTHENTICITY ENGINE & DIAGNOSTIC PIPELINE SECTION */}
           <div className="space-y-4">
-            {/* 1. Resemble AI Live Deepfake Detection Card */}
+            {/* 1. Voice Authenticity Engine Live Detection Card */}
             <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-5 space-y-4">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-slate-100">
                 <div>
                   <div className="flex items-center gap-2">
                     <span className="w-2.5 h-2.5 rounded-full bg-blue-500 animate-pulse" />
-                    <h4 className="text-xs font-bold text-slate-900 uppercase tracking-tight">RESEMBLE AI LIVE DEEPFAKE DETECTION</h4>
+                    <h4 className="text-xs font-bold text-slate-900 uppercase tracking-tight">VOICE AUTHENTICITY ENGINE LIVE DETECTION</h4>
                   </div>
                   <p className="text-[11px] text-slate-500 mt-0.5">Authoritative Cloud Streaming Deepfake & Voice Impersonation Engine</p>
                 </div>
@@ -862,14 +862,14 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId }) {
                 </div>
               </div>
 
-              {/* Real-time Resemble Metric Grid */}
+              {/* Real-time Voice Metric Grid */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                 <div className="bg-slate-50/70 p-3 rounded-xl border border-slate-100">
                   <p className="text-[10px] text-slate-400 font-mono uppercase">SYNTHETIC PROBABILITY</p>
                   <p className="text-lg font-mono font-extrabold text-slate-900 mt-1">
                     {formatPercent(riskData.resemble?.syntheticProbability, 1) !== null ? `${formatPercent(riskData.resemble.syntheticProbability, 1)}%` : '—'}
                   </p>
-                  <p className="text-[10px] text-slate-400 mt-0.5">Resemble score</p>
+                  <p className="text-[10px] text-slate-400 mt-0.5">Voice authenticity score</p>
                 </div>
 
                 <div className="bg-slate-50/70 p-3 rounded-xl border border-slate-100">
@@ -951,28 +951,28 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId }) {
                   <span className={`w-2 h-2 rounded-full ${riskData.windowsAnalyzed > 0 ? 'bg-emerald-500' : 'bg-slate-300'}`} />
                 </div>
 
-                {/* 5. Resemble Connection */}
+                {/* 5. Voice Engine Connection */}
                 <div className="p-2.5 rounded-xl border border-slate-100 bg-slate-50/60 flex items-center justify-between">
                   <div>
-                    <p className="text-[10px] font-mono text-slate-400 uppercase">5. RESEMBLE WS</p>
+                    <p className="text-[10px] font-mono text-slate-400 uppercase">5. VOICE ENGINE WS</p>
                     <p className="text-xs font-bold text-slate-800">{riskData.resemble?.available || riskData.windowsAnalyzed > 0 ? 'OPEN' : 'STANDBY'}</p>
                   </div>
                   <span className={`w-2 h-2 rounded-full ${riskData.resemble?.available || riskData.windowsAnalyzed > 0 ? 'bg-emerald-500' : 'bg-slate-300'}`} />
                 </div>
 
-                {/* 6. Resemble Ready */}
+                {/* 6. Voice Engine Ready */}
                 <div className="p-2.5 rounded-xl border border-slate-100 bg-slate-50/60 flex items-center justify-between">
                   <div>
-                    <p className="text-[10px] font-mono text-slate-400 uppercase">6. RESEMBLE READY</p>
+                    <p className="text-[10px] font-mono text-slate-400 uppercase">6. VOICE ENGINE READY</p>
                     <p className="text-xs font-bold text-slate-800">{riskData.windowsAnalyzed > 0 ? 'READY' : 'PENDING'}</p>
                   </div>
                   <span className={`w-2 h-2 rounded-full ${riskData.windowsAnalyzed > 0 ? 'bg-emerald-500' : 'bg-slate-300'}`} />
                 </div>
 
-                {/* 7. Resemble Result */}
+                {/* 7. Voice Engine Result */}
                 <div className="p-2.5 rounded-xl border border-slate-100 bg-slate-50/60 flex items-center justify-between">
                   <div>
-                    <p className="text-[10px] font-mono text-slate-400 uppercase">7. RESEMBLE RESULT</p>
+                    <p className="text-[10px] font-mono text-slate-400 uppercase">7. VOICE ENGINE RESULT</p>
                     <p className="text-xs font-bold text-slate-800">
                       {riskData.riskLevel === 'NO_VOICE' ? 'NO VOICE' : (riskData.resemble?.syntheticProbability !== null ? 'RECEIVED' : 'WAITING')}
                     </p>
@@ -1008,7 +1008,7 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId }) {
         <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between bg-slate-50/50">
           <div>
             <h3 className="text-sm font-bold text-slate-900 tracking-tight">ANALYSIS EVIDENCE & WINDOW AUDIT</h3>
-            <p className="text-xs text-slate-500">Resemble AI empirical deepfake detection evidence per 2.5s streaming audio window</p>
+            <p className="text-xs text-slate-500">Voice authenticity engine empirical detection evidence per 2.5s streaming audio window</p>
           </div>
           <span className="text-xs font-mono text-slate-400">Total windows: {evidenceLog.length}</span>
         </div>
@@ -1034,7 +1034,7 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId }) {
                   <tr key={i} className="hover:bg-slate-50">
                     <td className="px-4 py-3 font-mono text-slate-500">{row.timestamp}</td>
                     <td className="px-4 py-3 font-mono font-bold text-slate-700">#{row.windowIndex}</td>
-                    <td className="px-4 py-3 font-mono font-bold text-blue-700">{row.detector || 'RESEMBLE AI'}</td>
+                    <td className="px-4 py-3 font-mono font-bold text-blue-700">{row.detector || 'VOICE AUTHENTICITY ENGINE'}</td>
                     <td className="px-4 py-3 font-mono font-bold text-slate-900">
                       {formatPercent(row.syntheticProbability, 1) !== null ? `${formatPercent(row.syntheticProbability, 1)}%` : '—'}
                     </td>

@@ -62,6 +62,9 @@ export default function Dashboard({ onStartCallClick, onSelectCall }) {
             <Play className="w-4 h-4 fill-white" />
             <span>OPEN LIVE SECURITY CONSOLE</span>
           </button>
+<div className="mt-4 flex justify-center">
+  <img src="/assets/image1.png" alt="Dashboard visual" className="max-w-full h-auto rounded-lg shadow-md" />
+</div>
         </div>
 
         {/* Compact System Indicators Strip */}
@@ -152,7 +155,7 @@ export default function Dashboard({ onStartCallClick, onSelectCall }) {
         <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between bg-slate-50/50">
           <div>
             <h3 className="text-sm font-bold text-slate-900 tracking-tight">REAL-TIME CALL RISK TELEMETRY FEED</h3>
-            <p className="text-xs text-slate-500">Live streams processed by AASIST anti-spoofing engine (Click any call to monitor)</p>
+            <p className="text-xs text-slate-500">Live streams processed by the voice authenticity engine (Click any call to monitor)</p>
           </div>
           <span className="inline-flex items-center gap-1.5 text-xs text-emerald-700 font-medium bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200 font-mono">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />

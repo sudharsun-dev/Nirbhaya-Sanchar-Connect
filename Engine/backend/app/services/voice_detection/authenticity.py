@@ -3,7 +3,7 @@ import time
 import math
 import hashlib
 import numpy as np
-import torch
+
 import torch.nn.functional as F
 from app.config import settings
 from app.services.voice_detection.aasist_model import Model as AASISTModel
