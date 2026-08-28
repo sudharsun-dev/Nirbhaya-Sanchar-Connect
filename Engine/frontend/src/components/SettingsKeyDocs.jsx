@@ -1,14 +1,254 @@
-import React from 'react';
-import { Key, Shield, FileCode, Lock, BookOpen } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Key, Shield, FileCode, Lock, BookOpen, Sliders, CheckCircle2, AlertTriangle, Radio } from 'lucide-react';
+import { fetchQAState, updateQAState } from '../services/api';
 
 export default function SettingsKeyDocs() {
+  const [qaState, setQaState] = useState({ enabled: false, scenario: 'LOW' });
+  const [saving, setSaving] = useState(false);
+  const [saveSuccess, setSaveSuccess] = useState(false);
+
+  useEffect(() => {
+    fetchQAState().then((res) => {
+      if (res && res.enabled !== undefined) {
+        setQaState(res);
+      }
+    });
+  }, []);
+
+  const handleToggle = async (nextEnabled) => {
+    setSaving(true);
+    setQaState((prev) => ({ ...prev, enabled: nextEnabled }));
+    console.info(`[QA-CLICK] control=QA_TOGGLE previous_enabled=${qaState.enabled} previous_scenario=${qaState.scenario}`);
+    console.info(`[QA-STATE] enabled=${nextEnabled} scenario=${qaState.scenario}`);
+    try {
+      await updateQAState(nextEnabled, qaState.scenario);
+      setSaveSuccess(true);
+      setTimeout(() => setSaveSuccess(false), 2000);
+    } catch (err) {
+      console.error('Failed to update QA state', err);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleScenarioChange = async (scenario) => {
+    setSaving(true);
+    setQaState((prev) => ({ ...prev, enabled: true, scenario }));
+    console.info(`[QA-CLICK] control=${scenario} previous_enabled=${qaState.enabled} previous_scenario=${qaState.scenario}`);
+    console.info(`[QA-STATE] enabled=true scenario=${scenario}`);
+    try {
+      await updateQAState(true, scenario);
+      setSaveSuccess(true);
+      setTimeout(() => setSaveSuccess(false), 2000);
+    } catch (err) {
+      console.error('Failed to update QA state', err);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 max-w-5xl">
       <div className="border-b border-slate-200 pb-4">
         <h2 className="text-xl font-bold text-slate-900 tracking-tight">API KEYS & CREDENTIAL CONFIGURATION GUIDE</h2>
-        <p className="text-xs text-slate-500">Security documentation for external AI services, database credentials, and secret keys</p>
+        <p className="text-xs text-slate-500">Security documentation for external AI services, database credentials, and QA test simulation controls</p>
       </div>
 
+      {/* 1. INTERACTIVE QA TEST CONTROLS CARD (EXCLUSIVE CONTROLLER) */}
+      <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm space-y-5">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
+          <div className="flex items-center gap-2.5">
+            <div className="p-2 bg-indigo-50 text-indigo-700 rounded-lg border border-indigo-200">
+              <Sliders className="w-5 h-5" />
+            </div>
+            <div>
+              <h3 className="text-sm font-bold text-slate-900 tracking-tight flex items-center gap-2">
+                QA TEST CONTROLS
+                <span className="text-[10px] font-mono font-bold bg-slate-100 text-slate-700 px-2 py-0.5 rounded border border-slate-200">
+                  EXCLUSIVE CONTROLLER
+                </span>
+              </h3>
+              <p className="text-xs text-slate-500">Global server-synchronized simulation engine for testing System 2 UI & telemetry</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold border ${
+              qaState.enabled
+                ? 'bg-amber-50 text-amber-800 border-amber-300'
+                : 'bg-emerald-50 text-emerald-800 border-emerald-300'
+            }`}>
+              <span className={`w-2 h-2 rounded-full ${qaState.enabled ? 'bg-amber-500 animate-pulse' : 'bg-emerald-500'}`} />
+              {qaState.enabled ? `SIMULATED (${qaState.scenario})` : 'REAL DETECTOR (QA OFF)'}
+            </span>
+            <span className="text-[10px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 px-2 py-1 rounded-md">
+              GLOBAL / SYNCED
+            </span>
+          </div>
+        </div>
+
+        {/* Interactive Controls Bar */}
+        <div className="bg-slate-900 rounded-xl p-5 text-slate-100 space-y-4">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+            {/* QA Master Switch */}
+            <div className="flex items-center gap-3">
+              <span className="text-xs font-mono font-bold text-slate-400">QA SIMULATION MODE:</span>
+              <div className="inline-flex rounded-lg bg-slate-800 p-1 border border-slate-700">
+                <button
+                  type="button"
+                  aria-label="Disable QA testing"
+                  className={`px-4 py-1.5 rounded-md text-xs font-bold transition ${
+                    !qaState.enabled
+                      ? 'bg-emerald-600 text-white shadow-sm'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                  onClick={() => handleToggle(false)}
+                >
+                  OFF (REAL AI)
+                </button>
+                <button
+                  type="button"
+                  aria-label="Enable QA testing"
+                  className={`px-4 py-1.5 rounded-md text-xs font-bold transition ${
+                    qaState.enabled
+                      ? 'bg-blue-600 text-white shadow-sm'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                  onClick={() => handleToggle(true)}
+                >
+                  ON (SIMULATED)
+                </button>
+              </div>
+            </div>
+
+            {/* Scenario Selector */}
+            <div className="flex items-center gap-3">
+              <span className="text-xs font-mono font-bold text-slate-400">TEST SCENARIO:</span>
+              <div className="inline-flex rounded-lg bg-slate-800 p-1 border border-slate-700">
+                {[
+                  { id: 'LOW', label: 'LOW (5–25)', color: 'bg-emerald-600' },
+                  { id: 'MEDIUM', label: 'MEDIUM (45–65)', color: 'bg-amber-600' },
+                  { id: 'HIGH', label: 'HIGH (93–98)', color: 'bg-rose-600' },
+                ].map((sc) => (
+                  <button
+                    key={sc.id}
+                    type="button"
+                    aria-label={`Set QA scenario to ${sc.id}`}
+                    disabled={!qaState.enabled}
+                    className={`px-3 py-1.5 rounded-md text-xs font-bold transition ${
+                      !qaState.enabled
+                        ? 'opacity-40 cursor-not-allowed text-slate-500'
+                        : qaState.scenario === sc.id
+                        ? `${sc.color} text-white shadow-sm font-extrabold`
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                    onClick={() => handleScenarioChange(sc.id)}
+                  >
+                    {sc.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {saveSuccess && (
+            <div className="text-[11px] text-emerald-400 font-mono flex items-center gap-1.5 pt-1">
+              <CheckCircle2 className="w-3.5 h-3.5" /> State successfully saved and broadcast to all connected clients!
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* 2. QA TEST CONTROLS DOCUMENTATION & SPECIFICATION */}
+      <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm space-y-6">
+        <div className="space-y-4">
+          <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+            <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+              <BookOpen className="w-4 h-4 text-indigo-600" />
+              QA TEST CONTROLS SPECIFICATION
+            </h3>
+            <span className="text-xs font-mono font-bold text-slate-500">VERSION 2.0</span>
+          </div>
+
+          <p className="text-xs text-slate-600">
+            <strong>Purpose:</strong> Provides controlled test scenarios for validating the System 2 interface, policy actions, and end-to-end telemetry without altering real AI model weights.
+          </p>
+
+          <div className="bg-amber-50 p-3.5 rounded-xl border border-amber-200 text-xs text-amber-900">
+            <p className="font-bold flex items-center gap-1.5">
+              ⚠️ TEST MODE INTEGRITY POLICY
+            </p>
+            <p className="mt-1 text-amber-800">
+              <strong>"QA results are simulated test values and are not real detector predictions."</strong> When QA mode is enabled, telemetry on Live Analysis displays a prominent <code className="bg-amber-200/60 px-1 py-0.5 rounded font-mono font-bold">SIMULATED</code> badge. Real fraud callbacks and DB persistence of genuine records are automatically bypassed.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+            <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-2">
+              <p className="font-bold text-slate-900 uppercase text-[11px]">Operational Modes</p>
+              <div className="space-y-1.5 text-slate-600 text-[11.5px]">
+                <p><strong>OFF:</strong> Real microphone audio is processed continuously through the local AI Voice Authenticity Engine; genuine detector probability and risk scores are displayed in real-time.</p>
+                <p><strong>LOW:</strong> Controlled low-risk test result (<span className="font-mono">5–25</span> range, Action: <span className="font-mono">CONTINUE</span>).</p>
+                <p><strong>MEDIUM:</strong> Controlled medium-risk test result (<span className="font-mono">45–65</span> range, Action: <span className="font-mono">VERIFY IDENTITY</span>).</p>
+                <p><strong>HIGH:</strong> Controlled high-risk test result (<span className="font-mono">93–98</span> range, Action: <span className="font-mono">HOLD / VERIFY</span>).</p>
+              </div>
+            </div>
+
+            <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-2">
+              <p className="font-bold text-slate-900 uppercase text-[11px]">Score Smoothing Mechanism</p>
+              <p className="text-slate-600 text-[11.5px]">
+                Simulated values utilize a controlled random-walk smoothing generator ensuring consecutive analysis windows never jump erratically (maximum step <span className="font-mono">&le; 3.0</span> points), maintaining consistent scenario ranges across all connected browsers.
+              </p>
+            </div>
+          </div>
+
+          {/* Endpoints & WebSocket Specs */}
+          <div className="space-y-3 pt-2">
+            <p className="font-bold text-slate-900 text-xs">REST API & WEBSOCKET SPECIFICATION</p>
+
+            <div className="space-y-2">
+              <div className="bg-slate-900 text-slate-100 p-3 rounded-lg text-xs font-mono overflow-x-auto">
+                <span className="text-emerald-400 font-bold">GET</span> /api/v1/qa/state
+                <pre className="text-slate-300 text-[11px] mt-1">{`{
+  "enabled": false,
+  "scenario": "LOW",
+  "updated_at": "2026-08-28T20:30:00Z"
+}`}</pre>
+              </div>
+
+              <div className="bg-slate-900 text-slate-100 p-3 rounded-lg text-xs font-mono overflow-x-auto">
+                <span className="text-blue-400 font-bold">POST</span> /api/v1/qa/state
+                <pre className="text-slate-300 text-[11px] mt-1">{`// Request Body
+{
+  "enabled": true,
+  "scenario": "HIGH"
+}`}</pre>
+              </div>
+
+              <div className="bg-slate-900 text-slate-100 p-3 rounded-lg text-xs font-mono overflow-x-auto">
+                <span className="text-purple-400 font-bold">WebSocket Event:</span> QA_MODE_UPDATED (Broadcast to all connected clients)
+                <pre className="text-slate-300 text-[11px] mt-1">{`{
+  "event": "QA_MODE_UPDATED",
+  "enabled": true,
+  "scenario": "HIGH",
+  "updated_at": "2026-08-28T20:30:00Z",
+  "simulated_data": {
+    "risk_score": 95.4,
+    "risk_level": "HIGH",
+    "synthetic_probability": 95.4,
+    "authenticity_score": 4.6,
+    "label": "SYNTHETIC",
+    "verdict": "SYNTHETIC (SIMULATED)",
+    "action": "HOLD / VERIFY",
+    "simulated": true
+  }
+}`}</pre>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* 3. ENVIRONMENT VARIABLES DIRECTORY */}
       <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm space-y-6">
         <div className="bg-blue-50 p-4 rounded-xl border border-blue-200 text-xs text-blue-900 flex items-start space-x-3">
           <Shield className="w-5 h-5 text-blue-700 flex-shrink-0 mt-0.5" />
@@ -41,7 +281,7 @@ export default function SettingsKeyDocs() {
                 key: 'VOICE_DETECTION_API_KEY',
                 status: 'OPTIONAL',
                 desc: 'External voice detection API key if using cloud anti-spoof provider.',
-                defaultVal: 'Unset (Uses PyTorch LFCC-ResNet engine)'
+                defaultVal: 'Unset (Uses Free Local AI Vocoder Engine)'
               },
               {
                 key: 'ASR_API_KEY',
@@ -73,94 +313,6 @@ export default function SettingsKeyDocs() {
                 </div>
               </div>
             ))}
-          </div>
-        </div>
-
-        {/* QA / TEST CONTROL DOCUMENTATION SECTION */}
-        <div className="space-y-4 pt-4 border-t border-slate-200">
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-              <BookOpen className="w-4 h-4 text-indigo-600" />
-              QA / TEST CONTROL SPECIFICATION
-            </h3>
-            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
-              <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-pulse" />
-              GLOBAL / SYNCED
-            </span>
-          </div>
-
-          <p className="text-xs text-slate-600">
-            <strong>Purpose:</strong> Control QA simulation states for testing the System 2 interface, policy actions, and UI telemetry without manipulating real AI model weights.
-          </p>
-
-          <div className="bg-amber-50 p-3.5 rounded-xl border border-amber-200 text-xs text-amber-900">
-            <p className="font-bold flex items-center gap-1.5">
-              ⚠️ TEST MODE INTEGRITY POLICY
-            </p>
-            <p className="mt-1 text-amber-800">
-              <strong>"Simulated results are not real AI detections."</strong> When QA mode is enabled, simulated telemetry is visibly badged as <code className="bg-amber-200/60 px-1 py-0.5 rounded font-mono font-bold">SIMULATED</code>. Real fraud callbacks and DB storage of genuine analysis are protected and bypassed during simulation.
-            </p>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
-            <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-2">
-              <p className="font-bold text-slate-900 uppercase text-[11px]">Operational Behavior</p>
-              <div className="space-y-1.5 text-slate-600 text-[11.5px]">
-                <p><strong>QA OFF:</strong> Real microphone audio is processed through the local AI Voice Authenticity Engine; genuine probability & risk scores are computed and displayed.</p>
-                <p><strong>QA ON:</strong> Simulated <code>LOW</code>, <code>MEDIUM</code>, or <code>HIGH</code> test states are displayed for interface verification.</p>
-              </div>
-            </div>
-
-            <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-2">
-              <p className="font-bold text-slate-900 uppercase text-[11px]">Available Test Scenarios</p>
-              <ul className="list-disc list-inside text-slate-600 space-y-1 text-[11.5px]">
-                <li><strong className="text-emerald-700">LOW:</strong> Authentic voice profile (<span className="font-mono">Risk: ~6.8</span>, Action: <span className="font-mono">CONTINUE</span>).</li>
-                <li><strong className="text-amber-700">MEDIUM:</strong> Suspicious artifact pattern (<span className="font-mono">Risk: ~55.4</span>, Action: <span className="font-mono">VERIFY</span>).</li>
-                <li><strong className="text-rose-700">HIGH:</strong> Synthetic clone alert (<span className="font-mono">Risk: ~98.6</span>, Action: <span className="font-mono">HOLD</span>).</li>
-              </ul>
-            </div>
-          </div>
-
-          <div className="space-y-3 pt-2">
-            <p className="font-bold text-slate-900 text-xs">REST API & WEBSOCKET SPECIFICATION</p>
-
-            <div className="space-y-2">
-              <div className="bg-slate-900 text-slate-100 p-3 rounded-lg text-xs font-mono overflow-x-auto">
-                <span className="text-emerald-400 font-bold">GET</span> /api/v1/qa/state
-                <pre className="text-slate-300 text-[11px] mt-1">{`{
-  "enabled": false,
-  "scenario": "LOW",
-  "updated_at": "2026-08-28T19:40:00Z"
-}`}</pre>
-              </div>
-
-              <div className="bg-slate-900 text-slate-100 p-3 rounded-lg text-xs font-mono overflow-x-auto">
-                <span className="text-blue-400 font-bold">POST</span> /api/v1/qa/state
-                <pre className="text-slate-300 text-[11px] mt-1">{`// Request Body
-{
-  "enabled": true,
-  "scenario": "HIGH"
-}`}</pre>
-              </div>
-
-              <div className="bg-slate-900 text-slate-100 p-3 rounded-lg text-xs font-mono overflow-x-auto">
-                <span className="text-purple-400 font-bold">WebSocket Event:</span> QA_MODE_UPDATED (Broadcasted to all active clients)
-                <pre className="text-slate-300 text-[11px] mt-1">{`{
-  "event": "QA_MODE_UPDATED",
-  "enabled": true,
-  "scenario": "HIGH",
-  "updated_at": "2026-08-28T19:40:00Z",
-  "simulated_data": {
-    "risk_score": 98.6,
-    "risk_level": "HIGH",
-    "synthetic_probability": 98.6,
-    "label": "SYNTHETIC",
-    "action": "HOLD",
-    "simulated": true
-  }
-}`}</pre>
-              </div>
-            </div>
           </div>
         </div>
       </div>

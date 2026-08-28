@@ -539,37 +539,6 @@ export default function CallScreen({ name, roomName, callId, onEnded }) {
       <aside>
         <ParticipantList participants={participants} />
       </aside>
-
-      {/* Global QA Test Control Bar (Synchronized with Backend & All Clients) */}
-      <div className="global-qa-bottom-bar" title="QA testing controls">
-        <span className="qa-label">
-          QA
-          <span className={`qa-status-dot ${qaState.enabled ? 'active' : ''}`} />
-        </span>
-        <button
-          type="button"
-          aria-label={qaState.enabled ? "Disable QA testing" : "Enable QA testing"}
-          className={`qa-toggle-btn ${qaState.enabled ? 'active' : ''}`}
-          onClick={(e) => handleQaToggle(!qaState.enabled, e)}
-        >
-          {qaState.enabled ? 'ON' : 'OFF'}
-        </button>
-        {qaState.enabled && (
-          <div className="qa-scenario-group" role="group" aria-label="QA Test Scenarios">
-            {['LOW', 'MEDIUM', 'HIGH'].map((sc) => (
-              <button
-                key={sc}
-                type="button"
-                aria-label={`Set QA scenario to ${sc}`}
-                className={`qa-sc-btn ${qaState.scenario === sc ? 'selected' : ''}`}
-                onClick={(e) => handleQaScenario(sc, e)}
-              >
-                {sc}
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
     </section>
   )
 }

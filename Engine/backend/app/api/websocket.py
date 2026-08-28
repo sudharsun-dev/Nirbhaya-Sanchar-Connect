@@ -237,7 +237,7 @@ async def websocket_analysis_endpoint(websocket: WebSocket, analysis_id: str):
 
                 # 9. Broadcast Authoritative RISK_UPDATED Telemetry
                 is_qa = qa_service.is_enabled()
-                qa_sim_data = qa_service.get_simulated_payload() if is_qa else None
+                qa_sim_data = qa_service.get_next_simulated_payload() if is_qa else None
 
                 effective_synth_prob = qa_sim_data["synthetic_probability"] if is_qa else synth_prob
                 effective_auth_score = qa_sim_data["authenticity_score"] if is_qa else auth_score
