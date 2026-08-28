@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
 from app.config import settings
-from app.database.session import get_db
+from app.database.session import get_db, AsyncSessionLocal
 from app.database.models import (
     Call, AnalysisSession, AudioAnalysisWindow, VoiceAnalysisResult,
     SpeakerAnalysisResult, AsrResult, ContextAnalysisResult, RiskScore,

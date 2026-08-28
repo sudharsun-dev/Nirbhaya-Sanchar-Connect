@@ -13,20 +13,41 @@ from app.api.websocket import ws_router
 async def lifespan(app: FastAPI):
     print("[STARTUP] NIRBHAYA SANCHAR ENGINE STARTING")
     print(f"[STARTUP] ENVIRONMENT={settings.ENVIRONMENT}")
-    print(f"[STARTUP] PORT={settings.API_PORT}")
-    print(f"[STARTUP] DATABASE CONFIGURED={'true' if settings.DATABASE_URL else 'false'}")
-    print(f"[STARTUP] MODEL PATH={settings.VOICE_MODEL_PATH}")
-    model_exists = os.path.exists(settings.VOICE_MODEL_PATH) if settings.VOICE_MODEL_PATH else False
-    print(f"[STARTUP] MODEL EXISTS={str(model_exists).lower()}")
+    print(f"[SERVER] PORT={settings.API_PORT} HOST={settings.API_HOST}")
 
-    print("[STARTUP] DATABASE INIT START")
+    # 1. Database Initialization (Defensive)
+    print("[DATABASE] INIT START")
     try:
         await init_db()
-        print("[STARTUP] DATABASE INIT SUCCESS")
+        print("[DATABASE] INIT SUCCESS - status=ONLINE")
     except Exception as db_err:
-        print(f"[STARTUP ERROR] Database initialization failed: {db_err}")
+        print(f"[DATABASE] status=OFFLINE error={db_err}")
 
-    print("[STARTUP] ENGINE READY")
+    # 2. AASIST Model Check (Defensive)
+    print("[AASIST] CHECKING MODEL")
+    model_exists = os.path.exists(settings.VOICE_MODEL_PATH) if settings.VOICE_MODEL_PATH else False
+    print(f"[AASIST] path={settings.VOICE_MODEL_PATH} exists={model_exists}")
+    try:
+        from app.services.voice_detection.authenticity import voice_authenticity_engine
+        print(f"[AASIST] weights_loaded={voice_authenticity_engine.weights_loaded} status={'ONLINE' if voice_authenticity_engine.weights_loaded else 'OFFLINE'}")
+    except Exception as m_err:
+        print(f"[AASIST] status=OFFLINE error={m_err}")
+
+    # 3. Speaker Verification (Defensive)
+    try:
+        from app.services.speaker.verifier import speaker_verifier
+        print(f"[SPEAKER] model={speaker_verifier.model_name} status=ONLINE")
+    except Exception as spk_err:
+        print(f"[SPEAKER] status=OFFLINE error={spk_err}")
+
+    # 4. System 1 Callback (Defensive)
+    try:
+        from app.services.system1.callback_service import callback_service
+        print(f"[CALLBACK] target={callback_service.callback_url} status=CONFIGURED")
+    except Exception as cb_err:
+        print(f"[CALLBACK] status=OFFLINE error={cb_err}")
+
+    print("[STARTUP] ENGINE READY - FASTAPI PROCESS ONLINE")
     yield
     print("[SHUTDOWN] NIRBHAYA SANCHAR ENGINE STOPPING")
 
