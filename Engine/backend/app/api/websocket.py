@@ -89,6 +89,7 @@ async def websocket_analysis_endpoint(websocket: WebSocket, analysis_id: str):
                 audio_bytes = message["bytes"]
                 window_index += 1
                 
+                print(f"[REAL-MIC-BACKEND-RECEIVE] call_id={analysis_id} window_index={window_index} bytes={len(audio_bytes)}")
                 print(f"[TRACE-S2-AUDIO-RECEIVE] call_id={analysis_id} message_type=bytes bytes={len(audio_bytes)} window_index={window_index}")
                 print(f"[SERVER-WS-RECEIVE] analysis_id={analysis_id} message_type=bytes bytes={len(audio_bytes)}")
                 print(f"[S2-AUDIO-RECEIVED] call_id={analysis_id} window={window_index} bytes={len(audio_bytes)} timestamp={start_pipeline_time}")
@@ -109,6 +110,10 @@ async def websocket_analysis_endpoint(websocket: WebSocket, analysis_id: str):
                 dur_ms = processed_audio.get("duration_ms", 2500.0)
                 rms = processed_audio.get("rms_energy", 0.0)
                 vad = processed_audio.get("speech_detected", True)
+
+                print(f"[REAL-MIC-BACKEND-DECODE] sample_rate={sr} channels={ch} samples={samples_count} duration_ms={dur_ms} rms={rms}")
+                if not vad or rms <= 0.005:
+                    print(f"[REAL-MIC-SILENCE] rms={rms} speech_detected={vad}")
 
                 print(f"[TRACE-AUDIO-DECODE] call_id={analysis_id} window_index={window_index} sample_rate={sr} channels={ch} samples={samples_count} duration_ms={dur_ms} rms={rms}")
                 print(f"[S2-AUDIO-DECODE] call_id={analysis_id} window={window_index} sample_rate={sr} channels={ch} samples={samples_count} duration={dur_ms} rms={rms}")

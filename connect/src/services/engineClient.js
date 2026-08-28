@@ -254,9 +254,12 @@ export function startAudioStreamToEngine(analysisId, mediaStreamTrack, options =
     return () => {};
   }
 
+  const trackSettings = track?.getSettings?.() || {};
+  const trackLabel = track?.label || 'LiveKit Microphone Track';
+
   const targetSampleRate = 16000;
   const chunkDurationSec = options.chunkDurationSec || 2.5;
-  const samplesPerChunk = Math.floor(targetSampleRate * chunkDurationSec);
+  const samplesPerChunk = Math.floor(targetSampleRate * chunkDurationSec); // 40000 samples
 
   let audioContext = null;
   let sourceNode = null;
@@ -264,6 +267,8 @@ export function startAudioStreamToEngine(analysisId, mediaStreamTrack, options =
   let muteGainNode = null;
   let audioBuffer = [];
   let windowIndex = 0;
+  let sampleFrameCount = 0;
+  let lastLoggedRms = -1;
   let isStreaming = true;
 
   try {
@@ -274,6 +279,11 @@ export function startAudioStreamToEngine(analysisId, mediaStreamTrack, options =
     }
 
     const nativeSampleRate = audioContext.sampleRate || 48000;
+    const channelCount = trackSettings.channelCount || 1;
+
+    console.info(`[REAL-MIC-START] device=${trackLabel} sample_rate=${nativeSampleRate} channel_count=${channelCount}`);
+    console.info(`[REAL-MIC-SAMPLE-RATE] native_sample_rate=${nativeSampleRate}`);
+
     const mediaStream = new MediaStream([track]);
     sourceNode = audioContext.createMediaStreamSource(mediaStream);
 
@@ -285,6 +295,19 @@ export function startAudioStreamToEngine(analysisId, mediaStreamTrack, options =
     processorNode.onaudioprocess = (audioProcessingEvent) => {
       if (!isStreaming) return;
       const rawInput = audioProcessingEvent.inputBuffer.getChannelData(0);
+
+      // Compute raw microphone input RMS
+      let rawSum = 0;
+      for (let i = 0; i < rawInput.length; i++) {
+        rawSum += rawInput[i] * rawInput[i];
+      }
+      const rawRms = Math.sqrt(rawSum / (rawInput.length || 1));
+
+      sampleFrameCount++;
+      if (sampleFrameCount % 8 === 0 || Math.abs(rawRms - lastLoggedRms) > 0.04) {
+        lastLoggedRms = rawRms;
+        console.info(`[REAL-MIC-SAMPLES] sample_rate=${nativeSampleRate} input_samples=${rawInput.length} rms=${rawRms.toFixed(4)}`);
+      }
 
       // Downsample to 16 kHz mono
       const downsampled = downsampleBuffer(rawInput, nativeSampleRate, targetSampleRate);
@@ -305,12 +328,18 @@ export function startAudioStreamToEngine(analysisId, mediaStreamTrack, options =
           sumSq += chunkSamples[i] * chunkSamples[i];
         }
         const rmsEnergy = Math.sqrt(sumSq / chunkSamples.length);
+        const speechDetected = rmsEnergy > 0.005;
 
         // Encode to WAV binary buffer (16 kHz, 16-bit mono)
         const wavBuffer = encodeWav(chunkSamples, targetSampleRate);
-
-        const speechDetected = rmsEnergy > 0.001;
         const wsReadyState = socket ? (socket.readyState === 1 ? 'OPEN' : socket.readyState) : 'NULL';
+
+        console.info(`[REAL-MIC-WINDOW] window_index=${windowIndex} native_sample_rate=${nativeSampleRate} output_sample_rate=16000 samples=${chunkSamples.length} duration_ms=2500 rms=${rmsEnergy.toFixed(4)}`);
+        console.info(`[REAL-MIC-SEND] window_index=${windowIndex} bytes=${wavBuffer.byteLength} ws_ready_state=${wsReadyState}`);
+
+        if (!speechDetected) {
+          console.info(`[REAL-MIC-SILENCE] rms=${rmsEnergy.toFixed(4)} speech_detected=false`);
+        }
 
         console.info(`[TRACE-AUDIO-WINDOW] call_id=${analysisId} window_index=${windowIndex} sample_rate=16000 channels=1 samples=${chunkSamples.length} duration_ms=2500 bytes=${wavBuffer.byteLength} rms=${rmsEnergy.toFixed(4)}`);
         console.info(`[TRACE-AUDIO-SEND] call_id=${analysisId} window_index=${windowIndex} bytes=${wavBuffer.byteLength} ready_state=${wsReadyState}`);
