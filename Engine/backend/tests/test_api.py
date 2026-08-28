@@ -1,3 +1,4 @@
+import uuid
 import pytest
 import pytest_asyncio
 from httpx import AsyncClient, ASGITransport
@@ -22,10 +23,11 @@ async def test_health_check_endpoint():
 @pytest.mark.asyncio
 async def test_analysis_start_and_risk_endpoints():
     transport = ASGITransport(app=app)
+    fresh_id = f"test_call_{uuid.uuid4().hex[:8]}"
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         # Start analysis
         payload = {
-            "call_id": "test_call_101",
+            "call_id": fresh_id,
             "caller_id": "+919876543210",
             "receiver_id": "+919123456789",
             "channel": "VOIP",

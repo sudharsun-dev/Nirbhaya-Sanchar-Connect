@@ -90,6 +90,7 @@ export function connectEngineStream(analysisId, onEventCallback) {
   }
 
   const wsUrl = `${ENGINE_WS_BASE}/analysis/${analysisId}`;
+  console.info(`[TRACE-WS] call_id=${analysisId} ws_url=${wsUrl}`);
   console.info(`[CLIENT-WS] url=${wsUrl}`);
   console.info(`[CLIENT-WS] state=CONNECTING`);
   console.info(`[TRACE] WS_URL=${wsUrl} call_id=${analysisId}`);
@@ -98,6 +99,7 @@ export function connectEngineStream(analysisId, onEventCallback) {
   socket = new WebSocket(wsUrl);
 
   socket.onopen = () => {
+    console.info(`[TRACE-WS-OPEN] id=${analysisId}`);
     console.info(`[CLIENT-WS] state=OPEN`);
     console.info(`[TRACE] WS_CONNECTED call_id=${analysisId}`);
     console.info(`[DEBUG-ENGINE-WS] CONNECTED call_id=${analysisId}`);
@@ -124,7 +126,10 @@ export function connectEngineStream(analysisId, onEventCallback) {
       const data = JSON.parse(event.data);
       console.info(`[S1-TELEMETRY-RECEIVED] call_id=${analysisId} event=${data.event}`, data);
       console.info(`[DEBUG-ENGINE-WS] MESSAGE RECEIVED`, { event: data.event, payload: data });
-      if (data.event === 'RISK_UPDATED') {
+      if (data.event === 'ANALYSIS_STARTED') {
+        console.info(`[TRACE-WS-EVENT] event=ANALYSIS_STARTED analysis_id=${analysisId}`);
+      } else if (data.event === 'RISK_UPDATED') {
+        console.info(`[TRACE-UI-RISK-RECEIVE] call_id=${analysisId} window_index=${data.window_index || 1} synthetic_probability=${data.synthetic_probability} authenticity_score=${data.authenticity_score} confidence=${data.overall_confidence} risk_score=${data.risk_score} risk_level=${data.risk_level} recommended_action=${data.recommended_action}`);
         console.info(`[TRACE] RISK_UPDATED call_id=${analysisId} risk=${data.risk_score} synthetic=${data.synthetic_probability}% level=${data.risk_level} action=${data.recommended_action}`);
         console.info(`[RISK] score=${data.risk_score} level=${data.risk_level} action=${data.recommended_action}`);
         if (data.synthetic_probability !== undefined) {
@@ -139,11 +144,13 @@ export function connectEngineStream(analysisId, onEventCallback) {
   };
 
   socket.onerror = (err) => {
+    console.info(`[TRACE-WS-ERROR] error=${err?.message || 'WebSocket network error'}`);
     console.info(`[CLIENT-WS] state=ERROR message=${err?.message || 'WebSocket network error'}`);
     console.warn('[SYSTEM 1] System 2 Engine WebSocket error', err);
   };
 
   socket.onclose = (event) => {
+    console.info(`[TRACE-WS-CLOSE] code=${event.code} reason=${event.reason || 'normal'}`);
     console.info(`[CLIENT-WS] state=CLOSED code=${event.code} reason=${event.reason || 'normal'}`);
     console.info(`[DEBUG-ENGINE-WS] CLOSED code=${event.code} reason=${event.reason || 'normal'}`);
     console.info('[SYSTEM 1] System 2 Engine WebSocket disconnected');
@@ -169,6 +176,7 @@ export function onRiskEvent(callback) {
 export async function notifyEngineStartCall(callPayload) {
   const url = `${ENGINE_HTTP_BASE}/analysis/start`;
   try {
+    console.info(`[TRACE-CALL] call_id=${callPayload.call_id}`);
     console.info(`[TRACE] CALL_ID=${callPayload.call_id}`);
     console.info(`[TRACE] ANALYSIS_START_REQUEST url=${url} call_id=${callPayload.call_id}`);
     console.info(`[ANALYSIS-START] URL=${url} call_id=${callPayload.call_id} origin=${typeof window !== 'undefined' ? window.location.origin : 'unknown'}`);
@@ -186,6 +194,8 @@ export async function notifyEngineStartCall(callPayload) {
       return null;
     }
     const data = await response.json();
+    console.info(`[TRACE-ANALYSIS] call_id=${callPayload.call_id} analysis_id=${data.analysis_id || callPayload.call_id}`);
+    console.info(`[TRACE-ANALYSIS-START] status=${data.status || 'STARTED'} call_id=${callPayload.call_id} analysis_id=${data.analysis_id || callPayload.call_id}`);
     console.info(`[TRACE] ANALYSIS_ID=${data.analysis_id || callPayload.call_id} status=${data.status}`);
     return data;
   } catch (err) {
@@ -302,6 +312,8 @@ export function startAudioStreamToEngine(analysisId, mediaStreamTrack, options =
         const speechDetected = rmsEnergy > 0.001;
         const wsReadyState = socket ? (socket.readyState === 1 ? 'OPEN' : socket.readyState) : 'NULL';
 
+        console.info(`[TRACE-AUDIO-WINDOW] call_id=${analysisId} window_index=${windowIndex} sample_rate=16000 channels=1 samples=${chunkSamples.length} duration_ms=2500 bytes=${wavBuffer.byteLength} rms=${rmsEnergy.toFixed(4)}`);
+        console.info(`[TRACE-AUDIO-SEND] call_id=${analysisId} window_index=${windowIndex} bytes=${wavBuffer.byteLength} ready_state=${wsReadyState}`);
         console.info(`[CLIENT-AUDIO] sample_rate=16000 channels=1 samples=${chunkSamples.length} duration_ms=${(samplesPerChunk / targetSampleRate) * 1000} bytes=${wavBuffer.byteLength}`);
         console.info(`[S1-AUDIO-CHUNK] call_id=${analysisId} window=${windowIndex} bytes=${wavBuffer.byteLength} sample_rate=16000 rms=${rmsEnergy.toFixed(4)} speech_detected=${speechDetected}`);
         console.info(`[DEBUG-AUDIO-SEND] call_id=${analysisId} websocket_readyState=${wsReadyState} chunk_number=${windowIndex} byte_length=${wavBuffer.byteLength} sample_rate=16000 rms=${rmsEnergy.toFixed(4)}`);

@@ -22,6 +22,32 @@ function formatConfidence(val) {
 }
 
 /**
+ * Downsamples Float32 audio buffer from inputSampleRate (e.g. 48kHz / 44.1kHz) to outputSampleRate (16kHz).
+ */
+function downsampleBuffer(buffer, inputSampleRate, outputSampleRate = 16000) {
+  if (inputSampleRate === outputSampleRate) {
+    return buffer;
+  }
+  const sampleRateRatio = inputSampleRate / outputSampleRate;
+  const newLength = Math.round(buffer.length / sampleRateRatio);
+  const result = new Float32Array(newLength);
+  let offsetResult = 0;
+  let offsetBuffer = 0;
+  while (offsetResult < result.length) {
+    const nextOffsetBuffer = Math.round((offsetResult + 1) * sampleRateRatio);
+    let accum = 0, count = 0;
+    for (let i = offsetBuffer; i < nextOffsetBuffer && i < buffer.length; i++) {
+      accum += buffer[i];
+      count++;
+    }
+    result[offsetResult] = count > 0 ? accum / count : 0;
+    offsetResult++;
+    offsetBuffer = nextOffsetBuffer;
+  }
+  return result;
+}
+
+/**
  * Encodes raw Float32 samples into a standard 16-bit mono PCM WAV ArrayBuffer.
  */
 function encodeWav(samples, sampleRate = 16000) {
@@ -104,6 +130,7 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId }) {
   const wsRef = useRef(null);
   const timerRef = useRef(null);
   const currentSubscribedCallIdRef = useRef(null);
+  const isLocallyStreamingRef = useRef(false);
   const pendingAudioQueueRef = useRef([]);
 
   // Connect to System 2 WebSocket for the current analysis session
@@ -116,6 +143,7 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId }) {
 
     const wsBase = resolveWsBase();
     const wsUrl = `${wsBase}/analysis/${targetId}`;
+    console.info(`[TRACE-WS] call_id=${targetId} ws_url=${wsUrl}`);
     console.info(`[CLIENT-WS] url=${wsUrl}`);
     console.info(`[CLIENT-WS] state=CONNECTING`);
     console.info(`[SYSTEM 2] Connecting to WebSocket: ${wsUrl} for call_id=${targetId}`);
@@ -125,6 +153,7 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId }) {
     wsRef.current = socket;
 
     socket.onopen = () => {
+      console.info(`[TRACE-WS-OPEN] id=${targetId}`);
       console.info(`[CLIENT-WS] state=OPEN`);
       console.info(`[SYSTEM 2] WebSocket connected for session ${targetId}`);
       setAudioStreamState('AUDIO RECEIVING');
@@ -149,21 +178,24 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId }) {
         const data = JSON.parse(event.data);
         console.info(`[UI-WS-RECEIVE] event=${data.event} analysis_id=${targetId} window_index=${data.window_index || 0} risk_score=${data.risk_score} synthetic_probability=${data.synthetic_probability}`, data);
         if (data.event === 'ANALYSIS_STARTED') {
+          console.info(`[TRACE-WS-EVENT] event=ANALYSIS_STARTED analysis_id=${targetId}`);
           setAudioStreamState('AUDIO RECEIVING');
         } else if (data.event === 'AUDIO_PROCESSED') {
           setAudioStreamState('ANALYZING AUDIO');
           setRiskData((prev) => ({
             ...prev,
             audioQuality: data.audio_quality_score,
-            windowsAnalyzed: data.window_index || prev.windowsAnalyzed + 1,
+            windowsAnalyzed: data.window_index || (prev.windowsAnalyzed + 1),
             lastLatencyMs: data.processing_latency_ms,
           }));
         } else if (data.event === 'RISK_UPDATED') {
+          const authScore = data.authenticity_score != null ? data.authenticity_score : (data.synthetic_probability != null ? Math.max(0, 100 - data.synthetic_probability) : null);
+          console.info(`[TRACE-UI-RISK-RECEIVE] call_id=${targetId} window_index=${data.window_index || 1} synthetic_probability=${data.synthetic_probability} authenticity_score=${authScore} confidence=${data.overall_confidence} risk_score=${data.risk_score} risk_level=${data.risk_level} recommended_action=${data.recommended_action}`);
           console.info(`[UI-RISK-RECEIVED] analysis_id=${targetId} window_index=${data.window_index || 1} synthetic_probability=${data.synthetic_probability} risk_score=${data.risk_score} risk_level=${data.risk_level}`);
           setAudioStreamState('ANALYSIS READY');
-          const authScore = data.synthetic_probability != null ? Math.max(0, 100 - data.synthetic_probability) : null;
           setRiskData((prev) => ({
             ...prev,
+            windowsAnalyzed: data.window_index != null ? data.window_index : (prev.windowsAnalyzed + 1),
             riskScore: data.risk_score,
             riskLevel: data.risk_level,
             overallConfidence: data.overall_confidence,
@@ -207,12 +239,14 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId }) {
     };
 
     socket.onerror = (err) => {
+      console.info(`[TRACE-WS-ERROR] error=${err?.message || 'WebSocket network error'}`);
       console.info(`[CLIENT-WS] state=ERROR message=${err?.message || 'WebSocket network error'}`);
       console.warn('[SYSTEM 2] WebSocket connection error', err);
       setAudioStreamState('ERROR');
     };
 
     socket.onclose = (ev) => {
+      console.info(`[TRACE-WS-CLOSE] code=${ev.code} reason=${ev.reason || 'normal'}`);
       console.info(`[CLIENT-WS] state=CLOSED code=${ev.code} reason=${ev.reason || 'normal'}`);
       console.info(`[SYSTEM 2] WebSocket closed (code=${ev.code}) for session ${targetId}`);
       if (wsRef.current === socket) {
@@ -221,7 +255,7 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId }) {
     };
   }, []);
 
-  // Auto-subscribe to initialCallId or active call from backend
+  // Auto-subscribe to initialCallId or active call from backend (only when not actively streaming locally)
   useEffect(() => {
     let active = true;
 
@@ -231,6 +265,11 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId }) {
         if (!active) return;
         const calls = stats.recent_calls || [];
         setAvailableCalls(calls);
+
+        // If currently streaming locally or analyzing, do not overwrite active call or reset telemetry!
+        if (isLocallyStreamingRef.current) {
+          return;
+        }
 
         if (initialCallId) {
           if (currentSubscribedCallIdRef.current !== initialCallId) {
@@ -350,17 +389,28 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId }) {
   const handleStartAnalysis = async () => {
     try {
       const activeId = callState.callId;
+      isLocallyStreamingRef.current = true;
+      currentSubscribedCallIdRef.current = activeId;
       setAnalysisId(activeId);
       setCallState((prev) => ({ ...prev, status: 'ANALYZING' }));
       setAudioStreamState('WAITING FOR AUDIO');
 
+      console.info(`[TRACE-CALL] call_id=${activeId}`);
+      console.info(`[TRACE-ANALYSIS] call_id=${activeId} analysis_id=${activeId}`);
+
       // 1. Notify Backend Start
-      await startAnalysis({
-        call_id: activeId,
-        caller_id: callState.callerId,
-        receiver_id: callState.receiverId,
-        channel: callState.channel,
-      }).catch((e) => console.warn('[SYSTEM 2] Start analysis notification warning:', e));
+      try {
+        const startRes = await startAnalysis({
+          call_id: activeId,
+          caller_id: callState.callerId,
+          receiver_id: callState.receiverId,
+          channel: callState.channel,
+        });
+        console.info(`[TRACE-ANALYSIS-START] status=${startRes?.status || 'STARTED'} call_id=${activeId} analysis_id=${startRes?.analysis_id || activeId}`);
+      } catch (e) {
+        console.warn('[SYSTEM 2] Start analysis notification warning:', e);
+        console.info(`[TRACE-ANALYSIS-START] status=STARTED call_id=${activeId} analysis_id=${activeId}`);
+      }
 
       // 2. Connect WebSocket
       connectWebSocket(activeId);
@@ -375,9 +425,13 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId }) {
       const samplesPerChunk = Math.floor(targetSampleRate * chunkDurationSec);
 
       const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-      const audioCtx = new AudioContextClass({ sampleRate: targetSampleRate });
+      const audioCtx = new AudioContextClass();
+      if (audioCtx.state === 'suspended') {
+        audioCtx.resume().catch(() => {});
+      }
       audioContextRef.current = audioCtx;
 
+      const nativeSampleRate = audioCtx.sampleRate || 48000;
       const source = audioCtx.createMediaStreamSource(stream);
       const processor = audioCtx.createScriptProcessor(4096, 1, 1);
       processorRef.current = processor;
@@ -386,15 +440,18 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId }) {
       let windowCount = 0;
 
       processor.onaudioprocess = (e) => {
-        const input = e.inputBuffer.getChannelData(0);
+        const rawInput = e.inputBuffer.getChannelData(0);
 
-        // Calculate Real RMS for Waveform
+        // Downsample microphone samples from native sample rate (e.g. 48kHz) to 16kHz
+        const downsampled = downsampleBuffer(rawInput, nativeSampleRate, targetSampleRate);
+
+        // Calculate Real RMS for Waveform & speech detection
         let sum = 0;
-        for (let i = 0; i < input.length; i++) {
-          sum += input[i] * input[i];
-          pcmBuffer.push(input[i]);
+        for (let i = 0; i < downsampled.length; i++) {
+          sum += downsampled[i] * downsampled[i];
+          pcmBuffer.push(downsampled[i]);
         }
-        const rms = Math.sqrt(sum / input.length);
+        const rms = Math.sqrt(sum / (downsampled.length || 1));
         setRmsVolume(rms);
 
         // Once 2.5 seconds (40,000 samples at 16kHz) accumulated, stream to Engine
@@ -404,6 +461,10 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId }) {
           pcmBuffer = pcmBuffer.slice(samplesPerChunk);
 
           const wavBuffer = encodeWav(chunk, targetSampleRate);
+          const wsReady = wsRef.current ? (wsRef.current.readyState === 1 ? 'OPEN' : wsRef.current.readyState) : 'NULL';
+
+          console.info(`[TRACE-AUDIO-WINDOW] call_id=${activeId} window_index=${windowCount} sample_rate=16000 channels=1 samples=${chunk.length} duration_ms=2500 bytes=${wavBuffer.byteLength} rms=${rms.toFixed(4)}`);
+          console.info(`[TRACE-AUDIO-SEND] call_id=${activeId} window_index=${windowCount} bytes=${wavBuffer.byteLength} ready_state=${wsReady}`);
           console.info(`[CLIENT-AUDIO] sample_rate=16000 channels=1 samples=${chunk.length} duration_ms=2500 bytes=${wavBuffer.byteLength} rms=${rms.toFixed(4)} speech_detected=${rms > 0.005}`);
           console.info(`[AUDIO-TAP] call_id=${activeId} chunk=${windowCount} sample_rate=16000 channels=1 bytes=${wavBuffer.byteLength} rms=${rms.toFixed(4)}`);
 
@@ -412,7 +473,6 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId }) {
             console.info(`[CLIENT-WS-SEND] analysis_id=${activeId} binary=true bytes=${wavBuffer.byteLength}`);
             setAudioStreamState('AUDIO RECEIVING');
           } else {
-            // Buffer audio chunks until WebSocket is fully OPEN (Never call HTTP /audio)
             console.info(`[SYSTEM 2] WebSocket buffering, queueing audio chunk #${windowCount} for call_id=${activeId}`);
             if (pendingAudioQueueRef.current.length < 10) {
               pendingAudioQueueRef.current.push(wavBuffer);
@@ -427,11 +487,13 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId }) {
       console.error('[SYSTEM 2] Failed to initialize microphone stream', err);
       setAudioStreamState('AUDIO INGESTION ERROR');
       setIsMicActive(false);
+      isLocallyStreamingRef.current = false;
     }
   };
 
   // Stop Audio Tap & Session
   const handleStopAnalysis = () => {
+    isLocallyStreamingRef.current = false;
     setIsMicActive(false);
     setRmsVolume(0);
     setAudioStreamState('ANALYSIS COMPLETE');

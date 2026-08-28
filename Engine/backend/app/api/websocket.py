@@ -89,6 +89,7 @@ async def websocket_analysis_endpoint(websocket: WebSocket, analysis_id: str):
                 audio_bytes = message["bytes"]
                 window_index += 1
                 
+                print(f"[TRACE-S2-AUDIO-RECEIVE] call_id={analysis_id} message_type=bytes bytes={len(audio_bytes)} window_index={window_index}")
                 print(f"[SERVER-WS-RECEIVE] analysis_id={analysis_id} message_type=bytes bytes={len(audio_bytes)}")
                 print(f"[S2-AUDIO-RECEIVED] call_id={analysis_id} window={window_index} bytes={len(audio_bytes)} timestamp={start_pipeline_time}")
                 print(f"[AUDIO-RECEIVED] call_id={analysis_id} bytes={len(audio_bytes)} timestamp={start_pipeline_time}")
@@ -98,6 +99,7 @@ async def websocket_analysis_endpoint(websocket: WebSocket, analysis_id: str):
                     processed_audio = preprocessor.process_audio_bytes(audio_bytes)
                 except Exception as prep_err:
                     print(f"[AUDIO-DECODE-ERROR] call_id={analysis_id} window={window_index} error={prep_err}")
+                    print(f"[TRACE-AUDIO-DECODE-ERROR] error={prep_err} bytes={len(audio_bytes)}")
                     continue
 
                 tensor = processed_audio.get("tensor")
@@ -108,17 +110,21 @@ async def websocket_analysis_endpoint(websocket: WebSocket, analysis_id: str):
                 rms = processed_audio.get("rms_energy", 0.0)
                 vad = processed_audio.get("speech_detected", True)
 
+                print(f"[TRACE-AUDIO-DECODE] call_id={analysis_id} window_index={window_index} sample_rate={sr} channels={ch} samples={samples_count} duration_ms={dur_ms} rms={rms}")
                 print(f"[S2-AUDIO-DECODE] call_id={analysis_id} window={window_index} sample_rate={sr} channels={ch} samples={samples_count} duration={dur_ms} rms={rms}")
                 print(f"[AUDIO-DECODE] sample_rate={sr} channels={ch} samples={samples_count} duration_ms={dur_ms} rms={rms}")
+                print(f"[TRACE-VAD] call_id={analysis_id} window_index={window_index} rms={rms} speech_detected={vad}")
                 print(f"[S2-VAD] call_id={analysis_id} window={window_index} rms={rms} speech_detected={vad}")
                 print(f"[VAD] speech_detected={vad} rms={rms}")
 
                 # 2. AASIST Voice Authenticity Inference (Independent)
                 voice_res = None
                 try:
+                    print(f"[TRACE-AASIST-START] call_id={analysis_id} window_index={window_index} samples={samples_count}")
                     print(f"[S2-AASIST-START] call_id={analysis_id} window={window_index} samples={samples_count}")
                     print(f"[AASIST-INPUT] shape={list(tensor.shape) if tensor is not None else []} dtype={str(tensor.dtype) if tensor is not None else 'unknown'} device={str(tensor.device) if tensor is not None else 'cpu'} sample_rate={sr} samples={samples_count}")
                     voice_res = voice_authenticity_engine.analyze_audio(processed_audio)
+                    print(f"[TRACE-AASIST-RESULT] call_id={analysis_id} window_index={window_index} synthetic_probability={voice_res.get('synthetic_probability')} authenticity_score={voice_res.get('authenticity_score')} confidence={voice_res.get('confidence')}")
                     print(f"[S2-AASIST-RESULT] call_id={analysis_id} window={window_index} status={voice_res.get('status')} synthetic_probability={voice_res.get('synthetic_probability')} authenticity_score={voice_res.get('authenticity_score')} confidence={voice_res.get('confidence')}")
                     print(f"[AASIST-OUTPUT] raw_output={{'spoof': {voice_res.get('spoof_logit')}, 'bonafide': {voice_res.get('bonafide_logit')}}} synthetic_probability={voice_res.get('synthetic_probability')} authenticity_score={voice_res.get('authenticity_score')} confidence={voice_res.get('confidence')}")
                 except Exception as aasist_err:
@@ -201,7 +207,9 @@ async def websocket_analysis_endpoint(websocket: WebSocket, analysis_id: str):
                 )
                 policy_output = policy_engine.evaluate(risk_output=risk_output, profile_name="BANK")
                 pipeline_latency_ms = round((time.time() - start_pipeline_time) * 1000, 2)
+                auth_score = round(100.0 - risk_output["synthetic_probability"], 2) if risk_output["synthetic_probability"] is not None else None
 
+                print(f"[TRACE-RISK] call_id={analysis_id} window_index={window_index} synthetic_probability={risk_output.get('synthetic_probability')} authenticity_score={auth_score} confidence={risk_output.get('overall_confidence')} risk_score={risk_output.get('risk_score')} risk_level={risk_output.get('risk_level')} recommended_action={policy_output.get('recommended_action')}")
                 print(f"[S2-RISK-RESULT] call_id={analysis_id} window={window_index} risk_score={risk_output.get('risk_score')} risk_level={risk_output.get('risk_level')} action={policy_output.get('recommended_action')} synthetic_probability={risk_output.get('synthetic_probability')}")
                 print(f"[RISK-OUTPUT] risk_score={risk_output.get('risk_score')} risk_level={risk_output.get('risk_level')} overall_confidence={risk_output.get('overall_confidence')}")
                 print(f"[RISK-ENGINE] call_id={analysis_id} synthetic_probability={risk_output.get('synthetic_probability')} speaker_score={risk_output.get('speaker_similarity')} context_score={risk_output.get('context_score')} behavior_score={risk_output.get('behavior_score')} risk_score={risk_output.get('risk_score')} risk_level={risk_output.get('risk_level')} action={policy_output.get('recommended_action')}")
@@ -209,6 +217,7 @@ async def websocket_analysis_endpoint(websocket: WebSocket, analysis_id: str):
                 # 8. Broadcast AUDIO_PROCESSED
                 await manager.broadcast_event(analysis_id, {
                     "event": "AUDIO_PROCESSED",
+                    "call_id": analysis_id,
                     "analysis_id": analysis_id,
                     "window_index": window_index,
                     "duration_ms": processed_audio["duration_ms"],
@@ -220,18 +229,21 @@ async def websocket_analysis_endpoint(websocket: WebSocket, analysis_id: str):
                 # 9. Broadcast RISK_UPDATED
                 risk_event_payload = {
                     "event": "RISK_UPDATED",
+                    "call_id": analysis_id,
                     "analysis_id": analysis_id,
                     "window_index": window_index,
                     "risk_score": risk_output["risk_score"],
                     "risk_level": risk_output["risk_level"],
                     "overall_confidence": risk_output["overall_confidence"],
                     "synthetic_probability": risk_output["synthetic_probability"],
+                    "authenticity_score": auth_score,
                     "speaker_similarity": risk_output["speaker_similarity"],
                     "context_score": risk_output["context_score"],
                     "reasons": risk_output["reasons"],
                     "recommended_action": policy_output["recommended_action"],
                     "processing_latency_ms": pipeline_latency_ms
                 }
+                print(f"[TRACE-TELEMETRY-SEND] call_id={analysis_id} window_index={window_index} event=RISK_UPDATED risk_score={risk_output['risk_score']} synthetic_probability={risk_output['synthetic_probability']}")
                 print(f"[S2-TELEMETRY-BROADCAST] call_id={analysis_id} window={window_index} synthetic_probability={risk_output['synthetic_probability']} risk_score={risk_output['risk_score']} risk_level={risk_output['risk_level']} action={policy_output['recommended_action']}")
                 print(f"[TELEMETRY-SEND] analysis_id={analysis_id} window={window_index} risk_score={risk_output['risk_score']} synthetic_probability={risk_output['synthetic_probability']} risk_level={risk_output['risk_level']} action={policy_output['recommended_action']}")
                 await manager.broadcast_event(analysis_id, risk_event_payload)
@@ -239,6 +251,7 @@ async def websocket_analysis_endpoint(websocket: WebSocket, analysis_id: str):
                 # 10. Broadcast POLICY_UPDATED
                 await manager.broadcast_event(analysis_id, {
                     "event": "POLICY_UPDATED",
+                    "call_id": analysis_id,
                     "analysis_id": analysis_id,
                     "recommended_action": policy_output["recommended_action"],
                     "verification_required": policy_output["verification_required"],
@@ -250,6 +263,7 @@ async def websocket_analysis_endpoint(websocket: WebSocket, analysis_id: str):
                     sec_msg = bank_policy_adapter.format_system1_message(risk_output, policy_output)
                     await manager.broadcast_event(analysis_id, {
                         "event": "ALERT_CREATED",
+                        "call_id": analysis_id,
                         "analysis_id": analysis_id,
                         "alert_level": "HIGH",
                         "security_message": sec_msg,
@@ -266,8 +280,10 @@ async def websocket_analysis_endpoint(websocket: WebSocket, analysis_id: str):
                         policy_output=policy_output,
                         verification_required=policy_output["verification_required"]
                     )
+                    print(f"[TRACE-SYSTEM1-CALLBACK] call_id={analysis_id} window_index={window_index} risk_score={risk_output['risk_score']} risk_level={risk_output['risk_level']} status={cb_res.get('status')}")
                     print(f"[CALLBACK] status={cb_res.get('status')} HTTP={cb_res.get('http_status')} error={cb_res.get('error')}")
                 except Exception as cb_err:
+                    print(f"[TRACE-SYSTEM1-CALLBACK] call_id={analysis_id} window_index={window_index} risk_score={risk_output['risk_score']} risk_level={risk_output['risk_level']} status=FAILED")
                     print(f"[CALLBACK] status=FAILED HTTP=None error={cb_err}")
 
                 # 13. Persist Telemetry Metadata to DB safely (Non-blocking)
