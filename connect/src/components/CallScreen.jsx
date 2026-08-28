@@ -338,7 +338,6 @@ export default function CallScreen({ name, roomName, callId, onEnded }) {
       active = false
       stopAudioTap()
       closeEngineSocket()
-      notifyEngineEndCall(effectiveCallId)
       if (currentConnection) {
         currentConnection.disconnect()
       }

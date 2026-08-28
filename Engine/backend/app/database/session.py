@@ -33,7 +33,12 @@ async def get_db():
         finally:
             await session.close()
 
+from sqlalchemy import text
+
 async def init_db():
-    """Create all tables asynchronously."""
+    """Create all tables asynchronously and enable WAL mode for SQLite."""
     async with engine.begin() as conn:
+        if "sqlite" in db_url:
+            await conn.execute(text("PRAGMA journal_mode=WAL;"))
+            await conn.execute(text("PRAGMA busy_timeout=10000;"))
         await conn.run_sync(Base.metadata.create_all)
