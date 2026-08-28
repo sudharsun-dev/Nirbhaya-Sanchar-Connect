@@ -24,9 +24,6 @@ export default function CallScreen({ name, roomName, callId, onEnded }) {
   const [connection, setConnection] = useState(null)
   const [retryCount, setRetryCount] = useState(0)
 
-  // Global QA Simulation Test State (Synchronized across all browsers)
-  const [qaState, setQaState] = useState({ enabled: false, scenario: 'HIGH' })
-
   // System 2 Security Intelligence State
   const [securityState, setSecurityState] = useState({
     status: 'INITIALIZING', // INITIALIZING, ACTIVE, OFFLINE, DEGRADED
@@ -51,15 +48,140 @@ export default function CallScreen({ name, roomName, callId, onEnded }) {
     simulated: false,
   })
   const [showSecurityDrawer, setShowSecurityDrawer] = useState(false)
+  const [qaState, setQaState] = useState({ enabled: false, scenario: 'LOW' })
 
-  // Fetch initial global QA state on mount
+  const getSimulatedDataForScenario = useCallback((scenario) => {
+    if (scenario === 'HIGH') {
+      return {
+        synthetic_probability: 98.6,
+        authenticity_score: 1.4,
+        confidence: 0.99,
+        risk_score: 98.6,
+        risk_level: 'HIGH',
+        label: 'SYNTHETIC',
+        action: 'HOLD',
+        reasons: ['QA Simulated: Severe acoustic vocoder anomaly detected (Test Mode)'],
+      };
+    } else if (scenario === 'MEDIUM') {
+      return {
+        synthetic_probability: 55.4,
+        authenticity_score: 44.6,
+        confidence: 0.85,
+        risk_score: 55.4,
+        risk_level: 'MEDIUM',
+        label: 'SUSPICIOUS',
+        action: 'VERIFY',
+        reasons: ['QA Simulated: Mild spectral phase inconsistency (Test Mode)'],
+      };
+    } else {
+      return {
+        synthetic_probability: 6.8,
+        authenticity_score: 93.2,
+        confidence: 0.95,
+        risk_score: 6.8,
+        risk_level: 'LOW',
+        label: 'REAL',
+        action: 'CONTINUE',
+        reasons: ['QA Simulated: Natural human bio-signal verified (Test Mode)'],
+      };
+    }
+  }, []);
+
+  const handleQaToggle = useCallback(async (nextEnabled, e) => {
+    if (e) {
+      if (typeof e.preventDefault === 'function') e.preventDefault();
+      if (typeof e.stopPropagation === 'function') e.stopPropagation();
+    }
+    const prevEnabled = qaState.enabled;
+    const prevScenario = qaState.scenario;
+    console.info(`[QA-CLICK] control=QA_TOGGLE previous_enabled=${prevEnabled} previous_scenario=${prevScenario}`);
+    console.info(`[QA-STATE] enabled=${nextEnabled} scenario=${prevScenario}`);
+
+    setQaState((prev) => ({ ...prev, enabled: nextEnabled }));
+
+    if (nextEnabled) {
+      const simData = getSimulatedDataForScenario(prevScenario);
+      setSecurityState((prev) => ({
+        ...prev,
+        status: 'ACTIVE',
+        riskScore: simData.risk_score,
+        riskLevel: simData.risk_level,
+        syntheticProbability: simData.synthetic_probability,
+        authenticityScore: simData.authenticity_score,
+        label: simData.label,
+        reasons: simData.reasons,
+        recommendedAction: simData.action,
+        simulated: true,
+      }));
+      console.info(`[QA-UI] enabled=true scenario=${prevScenario}`);
+    } else {
+      setSecurityState((prev) => ({ ...prev, simulated: false }));
+      console.info(`[QA-UI] enabled=false scenario=${prevScenario}`);
+    }
+
+    try {
+      await setQAState(nextEnabled, prevScenario);
+    } catch (err) {
+      console.error('[QA-ERROR] Failed to push QA state', err);
+    }
+  }, [qaState, getSimulatedDataForScenario]);
+
+  const handleQaScenario = useCallback(async (scenario, e) => {
+    if (e) {
+      if (typeof e.preventDefault === 'function') e.preventDefault();
+      if (typeof e.stopPropagation === 'function') e.stopPropagation();
+    }
+    const prevEnabled = qaState.enabled;
+    const prevScenario = qaState.scenario;
+    console.info(`[QA-CLICK] control=${scenario} previous_enabled=${prevEnabled} previous_scenario=${prevScenario}`);
+    console.info(`[QA-STATE] enabled=true scenario=${scenario}`);
+
+    setQaState((prev) => ({ ...prev, enabled: true, scenario }));
+
+    const simData = getSimulatedDataForScenario(scenario);
+    setSecurityState((prev) => ({
+      ...prev,
+      status: 'ACTIVE',
+      riskScore: simData.risk_score,
+      riskLevel: simData.risk_level,
+      syntheticProbability: simData.synthetic_probability,
+      authenticityScore: simData.authenticity_score,
+      label: simData.label,
+      reasons: simData.reasons,
+      recommendedAction: simData.action,
+      simulated: true,
+    }));
+    console.info(`[QA-UI] enabled=true scenario=${scenario}`);
+
+    try {
+      await setQAState(true, scenario);
+    } catch (err) {
+      console.error('[QA-ERROR] Failed to push QA state', err);
+    }
+  }, [qaState, getSimulatedDataForScenario]);
+
   useEffect(() => {
-    getQAState().then((state) => {
-      if (state && state.enabled !== undefined) {
-        setQaState(state)
+    getQAState().then((s) => {
+      if (s && s.enabled !== undefined) {
+        setQaState(s);
+        if (s.enabled) {
+          const simData = getSimulatedDataForScenario(s.scenario || 'HIGH');
+          setSecurityState((prev) => ({
+            ...prev,
+            status: 'ACTIVE',
+            riskScore: simData.risk_score,
+            riskLevel: simData.risk_level,
+            syntheticProbability: simData.synthetic_probability,
+            authenticityScore: simData.authenticity_score,
+            label: simData.label,
+            reasons: simData.reasons,
+            recommendedAction: simData.action,
+            simulated: true,
+          }));
+        }
       }
-    })
-  }, [])
+    });
+  }, [getSimulatedDataForScenario]);
 
   const effectiveCallId = useRef(callId || `call_${roomName || Date.now()}`).current
 
@@ -118,7 +240,8 @@ export default function CallScreen({ name, roomName, callId, onEnded }) {
               simulated: Boolean(event.simulated),
             }))
           } else if (event.event === 'QA_MODE_UPDATED') {
-            console.info(`[QA-SYNC] enabled=${event.enabled} scenario=${event.scenario}`);
+            console.info(`[QA-RECEIVE]\nenabled=${Boolean(event.enabled)}\nscenario=${event.scenario || 'HIGH'}`);
+            console.info(`[QA-UI]\nenabled=${Boolean(event.enabled)}\nscenario=${event.scenario || 'HIGH'}`);
             setQaState({ enabled: Boolean(event.enabled), scenario: event.scenario || 'HIGH' });
             if (event.enabled && event.simulated_data) {
               const sim = event.simulated_data;
@@ -418,30 +541,28 @@ export default function CallScreen({ name, roomName, callId, onEnded }) {
       </aside>
 
       {/* Global QA Test Control Bar (Synchronized with Backend & All Clients) */}
-      <div className="global-qa-bottom-bar" title="Global QA Test Control (Synchronized across all browsers)">
-        <span className="qa-label">QA</span>
+      <div className="global-qa-bottom-bar" title="QA testing controls">
+        <span className="qa-label">
+          QA
+          <span className={`qa-status-dot ${qaState.enabled ? 'active' : ''}`} />
+        </span>
         <button
           type="button"
+          aria-label={qaState.enabled ? "Disable QA testing" : "Enable QA testing"}
           className={`qa-toggle-btn ${qaState.enabled ? 'active' : ''}`}
-          onClick={async () => {
-            const next = !qaState.enabled;
-            setQaState((prev) => ({ ...prev, enabled: next }));
-            await setQAState(next, qaState.scenario);
-          }}
+          onClick={(e) => handleQaToggle(!qaState.enabled, e)}
         >
           {qaState.enabled ? 'ON' : 'OFF'}
         </button>
         {qaState.enabled && (
-          <div className="qa-scenario-group">
+          <div className="qa-scenario-group" role="group" aria-label="QA Test Scenarios">
             {['LOW', 'MEDIUM', 'HIGH'].map((sc) => (
               <button
                 key={sc}
                 type="button"
+                aria-label={`Set QA scenario to ${sc}`}
                 className={`qa-sc-btn ${qaState.scenario === sc ? 'selected' : ''}`}
-                onClick={async () => {
-                  setQaState((prev) => ({ ...prev, scenario: sc }));
-                  await setQAState(true, sc);
-                }}
+                onClick={(e) => handleQaScenario(sc, e)}
               >
                 {sc}
               </button>

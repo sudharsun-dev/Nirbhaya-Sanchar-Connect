@@ -440,7 +440,7 @@ async def set_qa_state(payload: QAModeUpdateRequest):
         "simulated_data": sim_data
     })
 
-    print(f"[QA-BROADCAST] QA_MODE_UPDATED enabled={updated_state['enabled']} scenario={updated_state['scenario']}")
+    print(f"[QA-BROADCAST]\nenabled={updated_state['enabled']}\nscenario={updated_state['scenario']}\n")
     return {
         "status": "SUCCESS",
         "qa_state": updated_state
