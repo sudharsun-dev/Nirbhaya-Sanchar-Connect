@@ -2,33 +2,17 @@ import React, { useState, useEffect } from 'react';
 import { Key, Shield, FileCode, Lock, BookOpen, Sliders, CheckCircle2, AlertTriangle, Radio } from 'lucide-react';
 import { fetchQAState, updateQAState } from '../services/api';
 
-import { getCurrentMode, setMode, subscribeToModeChanges } from '../services/globalControl';
+// Note: globalControl.js / Supabase is NOT used for QA mode writes.
+// The backend database (/qa/state) is the ONLY authoritative source.
+// Backend POST /qa/state broadcasts QA_MODE_UPDATED to all connected browsers.
 
 export default function SettingsKeyDocs({ globalQAState, onQAStateChange }) {
   const [localQA, setLocalQA] = useState(globalQAState || { enabled: false, scenario: 'LOW' });
   const [saving, setSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
-  const [secretMode, setSecretMode] = useState(getCurrentMode());
 
-  useEffect(() => {
-    const unsub = subscribeToModeChanges((m) => {
-      setSecretMode(m);
-    });
-    return () => unsub();
-  }, []);
-
-  const handleSecretSelect = async (mode) => {
-    setSaving(true);
-    await setMode(mode);
-    setSaving(false);
-
-    // Also sync existing QA state handlers for backward compatibility
-    if (mode === 'REAL') {
-      handleToggle(false);
-    } else {
-      handleScenarioChange(mode);
-    }
-  };
+  // No Supabase subscription needed here — App.jsx root WebSocket handles QA_MODE_UPDATED
+  // and passes the updated qaState down as globalQAState prop.
 
   useEffect(() => {
     if (globalQAState) {
@@ -37,6 +21,8 @@ export default function SettingsKeyDocs({ globalQAState, onQAStateChange }) {
   }, [globalQAState]);
 
   useEffect(() => {
+    // Load authoritative QA state from database on mount
+    // fetchQAState returns null on error — only update if we got a real response
     fetchQAState().then((res) => {
       if (res && res.enabled !== undefined) {
         setLocalQA(res);

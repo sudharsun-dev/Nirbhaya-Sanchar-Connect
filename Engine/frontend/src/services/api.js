@@ -112,10 +112,14 @@ export async function fetchQAState() {
   try {
     const res = await fetch(`${API_BASE}/qa/state`);
     if (res.ok) return await res.json();
+    // Non-OK response — return null so callers keep existing state
+    console.warn('[QA API] Fetch state returned non-OK status:', res.status);
+    return null;
   } catch (err) {
-    console.warn('[QA API] Fetch state failed:', err.message);
+    // Network error — return null so callers keep existing state and do NOT reset to false
+    console.warn('[QA API] Fetch state failed (network):', err.message);
+    return null;
   }
-  return { enabled: false, scenario: 'HIGH' };
 }
 
 export async function updateQAState(enabled, scenario = 'HIGH') {

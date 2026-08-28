@@ -5,6 +5,13 @@ import {
   Radio, Clock, Database, ChevronRight, Activity, FileText
 } from 'lucide-react';
 import { getCurrentMode, subscribeToModeChanges } from '../services/globalControl';
+import {
+  fetchQAState,
+  startAnalysis,
+  requestVerification,
+  resolveWsBase,
+  API_BASE,
+} from '../services/api';
 
 function formatScore(val, digits = 1) {
   if (val === null || val === undefined || isNaN(Number(val))) return null;
@@ -363,8 +370,24 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId, globalQA
           setAudioStreamState('AUDIO RECEIVING');
         } else if (data.event === 'CALL_ENDED' || data.type === 'CALL_ENDED') {
           console.info(`[CALL-EVENT] type=CALL_ENDED call_id=${data.call_id}`);
-          setCallState((prev) => ({ ...prev, status: 'ENDED' }));
-          setAudioStreamState('CALL ENDED');
+          // Only end THIS call's analysis if the call_id matches the currently active session.
+          // Do not close analysis for a different call_id.
+          setCallState((prev) => {
+            if (prev.callId === data.call_id) {
+              console.info(`[CALL-END] Closing WebSocket for ended call_id=${data.call_id}`);
+              // Close the WebSocket for this specific call only
+              if (wsRef.current) {
+                try { wsRef.current.close(); } catch (_) {}
+                wsRef.current = null;
+              }
+              currentSubscribedCallIdRef.current = null;
+              return { ...prev, status: 'ENDED' };
+            }
+            // Different call ended — leave current session untouched
+            console.info(`[CALL-END] Ignoring CALL_ENDED for non-active call_id=${data.call_id} (active=${prev.callId})`);
+            return prev;
+          });
+          setAudioStreamState((prev) => prev === 'AUDIO RECEIVING' ? 'CALL ENDED' : prev);
           setIsMicActive(false);
           setRmsVolume(0);
         } else if (data.event === 'AUDIO_PROCESSED') {
@@ -585,9 +608,10 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId, globalQA
     return () => {
       active = false;
       clearInterval(interval);
-      if (wsRef.current) {
-        try { wsRef.current.close(); } catch (_) {}
-      }
+      // NOTE: Do NOT close wsRef.current here.
+      // LiveCallUI is now always mounted (App.jsx uses display:none).
+      // The WebSocket must stay alive across all tab navigation.
+      // It only closes when CALL_ENDED is received for the active call_id.
     };
   }, [initialCallId, connectWebSocket]);
 
@@ -816,13 +840,14 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId, globalQA
     }
   };
 
-  // Stop Audio Tap & Session
+  // Stop Audio Tap only — keep WebSocket alive so System 2 continues receiving System 1 audio.
+  // The WebSocket is only closed when CALL_ENDED is received for the active call_id.
   const handleStopAnalysis = () => {
     isLocallyStreamingRef.current = false;
     setIsMicActive(false);
     setRmsVolume(0);
-    setAudioStreamState('ANALYSIS COMPLETE');
-    setCallState((prev) => ({ ...prev, status: 'IDLE' }));
+    setAudioStreamState('MIC STOPPED — STREAM ACTIVE');
+    setCallState((prev) => ({ ...prev, status: 'ANALYZING' }));
     pendingAudioQueueRef.current = [];
 
     if (mediaStreamRef.current) {
@@ -837,10 +862,9 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId, globalQA
       try { audioContextRef.current.close(); } catch (_) {}
       audioContextRef.current = null;
     }
-    if (wsRef.current) {
-      try { wsRef.current.close(); } catch (_) {}
-      wsRef.current = null;
-    }
+    // WebSocket stays open — do NOT close wsRef.current here.
+    // System 1 may still be sending audio via the server-side pipeline.
+    console.info('[AUDIO-TAP] Local microphone tap stopped. WebSocket remains active for System 1 audio.');
   };
 
   const handleRequestVerification = async () => {
