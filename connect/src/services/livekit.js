@@ -61,16 +61,21 @@ export async function connectToRoom(roomName, identity, handlers = {}) {
   handlers.onParticipantChange?.(null, room)
   let microphone
   try {
+    console.info(`[ANALYZE-CLICK]\ncall_id=${roomName}\n`)
     const audioConstraints = {
       echoCancellation: false,
       noiseSuppression: false,
       autoGainControl: false,
       channelCount: 1,
     }
-    console.info(`[MIC-CONFIG]\nechoCancellation=false\nnoiseSuppression=false\nautoGainControl=false`)
+    console.info(`[MIC-CONFIG]\nechoCancellation=false\nnoiseSuppression=false\nautoGainControl=false\nchannelCount=1\n`)
     microphone = await createLocalAudioTrack(audioConstraints)
+    console.info(`[MIC-PERMISSION]\nstatus=GRANTED\n`)
+    const mTrack = microphone.mediaStreamTrack
+    console.info(`[MIC-STREAM]\nactive=${mTrack ? (mTrack.readyState === 'live') : true}\ntrack_count=1\naudio_tracks=${mTrack?.label || 'Microphone Track'}\n`)
     await room.localParticipant.publishTrack(microphone)
   } catch (error) {
+    console.error(`[MIC-PERMISSION]\nstatus=FAILED\nerror=${error.name || error.message}\n`)
     room.disconnect()
     if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') throw new Error('Microphone permission is required for voice calls.')
     throw new Error('Microphone is unavailable.')

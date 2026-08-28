@@ -281,6 +281,7 @@ export function startAudioStreamToEngine(analysisId, mediaStreamTrack, options =
     const nativeSampleRate = audioContext.sampleRate || 48000;
     const channelCount = trackSettings.channelCount || 1;
 
+    console.info(`[AUDIO-CONTEXT]\nstate=${audioContext.state}\nsample_rate=${nativeSampleRate}\n`);
     console.info(`[REAL-MIC-START] device=${trackLabel} sample_rate=${nativeSampleRate} channel_count=${channelCount}`);
     console.info(`[REAL-MIC-SAMPLE-RATE] native_sample_rate=${nativeSampleRate}`);
 
@@ -296,16 +297,21 @@ export function startAudioStreamToEngine(analysisId, mediaStreamTrack, options =
       if (!isStreaming) return;
       const rawInput = audioProcessingEvent.inputBuffer.getChannelData(0);
 
-      // Compute raw microphone input RMS
+      // Compute raw microphone input RMS and Peak
       let rawSum = 0;
+      let rawPeak = 0;
       for (let i = 0; i < rawInput.length; i++) {
-        rawSum += rawInput[i] * rawInput[i];
+        const val = rawInput[i];
+        rawSum += val * val;
+        const absVal = Math.abs(val);
+        if (absVal > rawPeak) rawPeak = absVal;
       }
       const rawRms = Math.sqrt(rawSum / (rawInput.length || 1));
 
       sampleFrameCount++;
       if (sampleFrameCount % 8 === 0 || Math.abs(rawRms - lastLoggedRms) > 0.04) {
         lastLoggedRms = rawRms;
+        console.info(`[AUDIO-DATA]\nsamples=${rawInput.length}\nrms=${rawRms.toFixed(4)}\npeak=${rawPeak.toFixed(4)}\n`);
         console.info(`[REAL-MIC-SAMPLES] sample_rate=${nativeSampleRate} input_samples=${rawInput.length} rms=${rawRms.toFixed(4)}`);
       }
 
@@ -334,6 +340,8 @@ export function startAudioStreamToEngine(analysisId, mediaStreamTrack, options =
         const wavBuffer = encodeWav(chunkSamples, targetSampleRate);
         const wsReadyState = socket ? (socket.readyState === 1 ? 'OPEN' : socket.readyState) : 'NULL';
 
+        console.info(`[AUDIO-WINDOW]\nwindow_index=${windowIndex}\nduration_ms=2500\nsamples=${chunkSamples.length}\n`);
+        console.info(`[WS-SEND]\ncall_id=${analysisId}\nbytes=${wavBuffer.byteLength}\nwindow_index=${windowIndex}\n`);
         console.info(`[MIC-AUDIO]\nsampleRate=${targetSampleRate}\nchannels=1\nsamples=${chunkSamples.length}\nrms=${rmsEnergy.toFixed(4)}`);
         console.info(`[REAL-MIC-WINDOW] window_index=${windowIndex} native_sample_rate=${nativeSampleRate} output_sample_rate=16000 samples=${chunkSamples.length} duration_ms=2500 rms=${rmsEnergy.toFixed(4)}`);
         console.info(`[REAL-MIC-SEND] window_index=${windowIndex} bytes=${wavBuffer.byteLength} ws_ready_state=${wsReadyState}`);

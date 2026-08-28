@@ -91,7 +91,7 @@ async def websocket_analysis_endpoint(websocket: WebSocket, analysis_id: str):
                 start_pipeline_time = time.time()
                 window_index += 1
                 
-                print(f"[AUDIO-RECEIVED] call_id={analysis_id} window={window_index} bytes={len(audio_bytes)}")
+                print(f"[AUDIO-RECEIVED]\ncall_id={analysis_id}\nbytes={len(audio_bytes)}\nwindow_index={window_index}\n")
 
                 # 1. Audio Preprocessing & VAD (Pure NumPy)
                 try:
@@ -107,8 +107,11 @@ async def websocket_analysis_endpoint(websocket: WebSocket, analysis_id: str):
                 rms = processed_audio.get("rms_energy", 0.0)
                 vad = processed_audio.get("speech_detected", True)
 
+                print(f"[AUDIO-DECODED]\nsample_rate={sr}\nchannels={ch}\nsamples={samples_count}\nduration_ms={dur_ms}\nrms={rms:.4f}\n")
+
                 # 2. Local Voice Authenticity & Deepfake Audio Detection (Free Local Engine)
                 voice_res = None
+                print(f"[DETECTOR-CALL]\ncall_id={analysis_id}\nwindow_index={window_index}\n")
                 try:
                     voice_res = await voice_detector.send_audio_chunk(
                         call_id=analysis_id,
@@ -129,6 +132,8 @@ async def websocket_analysis_endpoint(websocket: WebSocket, analysis_id: str):
                         "consistency": None,
                         "detail": str(res_err)
                     }
+
+                print(f"[DETECTOR-RESULT]\nsynthetic_probability={voice_res.get('synthetic_probability') if voice_res else None}\nauthenticity={voice_res.get('authenticity_score') if voice_res else None}\nconfidence={voice_res.get('confidence') if voice_res else None}\nverdict={voice_res.get('verdict') if voice_res else None}\n")
 
                 # 3. Speaker Verification (Pure NumPy/SciPy)
                 speaker_res = None
@@ -197,7 +202,7 @@ async def websocket_analysis_endpoint(websocket: WebSocket, analysis_id: str):
                 risk_level_val = risk_output.get("risk_level")
                 rec_action = policy_output.get("recommended_action", risk_output.get("action", "CONTINUE"))
 
-                print(f"[RISK-RESULT] call_id={analysis_id} window={window_index} synthetic_probability={synth_prob} risk_score={risk_score_val} risk_level={risk_level_val} action={rec_action}")
+                print(f"[RISK-RESULT]\nrisk_score={risk_score_val}\nrisk_level={risk_level_val}\naction={rec_action}\n")
 
                 # 8. Broadcast AUDIO_PROCESSED
                 await manager.broadcast_event(analysis_id, {
@@ -217,9 +222,9 @@ async def websocket_analysis_endpoint(websocket: WebSocket, analysis_id: str):
                     "call_id": analysis_id,
                     "analysis_id": analysis_id,
                     "window_index": window_index,
-                    "detector": "PRETRAINED_WAV2VEC2",
-                    "detector_source": voice_res.get("detector_source", "PRETRAINED_WAV2VEC2") if voice_res else "PRETRAINED_WAV2VEC2",
-                    "model": voice_res.get("model", "Sara1708/deepfake-audio-wav2vec2") if voice_res else "Sara1708/deepfake-audio-wav2vec2",
+                    "detector": "LOCAL_AI",
+                    "detector_source": voice_res.get("detector_source", "LOCAL_AI") if voice_res else "LOCAL_AI",
+                    "model": voice_res.get("model", voice_res.get("model_name", "Acoustic-Spectral-Vocoder-Artifact-Detector (v1.2)")) if voice_res else "Acoustic-Spectral-Vocoder-Artifact-Detector (v1.2)",
                     "synthetic_probability": synth_prob,
                     "authenticity_score": auth_score,
                     "confidence": risk_output.get("overall_confidence", voice_res.get("confidence") if voice_res else None),
@@ -242,11 +247,7 @@ async def websocket_analysis_endpoint(websocket: WebSocket, analysis_id: str):
                     "processing_latency_ms": pipeline_latency_ms
                 }
                 
-                # Diagnostic logging for live pipeline verification
-                print(f"[LIVE-DETECT]\ncall_id={analysis_id}\nwindow_index={window_index}\naudio_bytes={len(audio_bytes)}\nsample_rate={sr}\nchannels={ch}\nsamples={samples_count}\nduration_ms={dur_ms}\nmodel_called={voice_res is not None and voice_res.get('status') != 'ERROR'}\n")
-                print(f"[MODEL-RESULT]\ncall_id={analysis_id}\nwindow_index={window_index}\nsynthetic_probability={voice_res.get('synthetic_probability') if voice_res else None}\nauthenticity={voice_res.get('authenticity_score') if voice_res else None}\nconfidence={voice_res.get('confidence') if voice_res else None}\nlabel={voice_res.get('label') if voice_res else None}\n")
-                print(f"[UI-TELEMETRY]\nsynthetic_probability={synth_prob}\nauthenticity={auth_score}\nconfidence={risk_event_payload.get('confidence')}\nverdict={voice_res.get('verdict') if voice_res else 'UNKNOWN'}\n")
-                
+                print(f"[WS-SEND]\nevent=RISK_UPDATED\n")
                 print(f"[TELEMETRY-BROADCAST] call_id={analysis_id} window={window_index} risk_score={risk_score_val} synthetic_probability={synth_prob} risk_level={risk_level_val} action={rec_action}")
                 await manager.broadcast_event(analysis_id, risk_event_payload)
 

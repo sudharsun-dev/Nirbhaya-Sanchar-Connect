@@ -464,14 +464,33 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId }) {
       // 2. Connect WebSocket
       connectWebSocket(targetId);
 
-      // 3. Acquire Real Microphone Audio Track
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      // 3. Acquire Real Microphone Audio Track with Raw Constraints
+      console.info(`[ANALYZE-CLICK]\ncall_id=${activeId}\n`);
+      const audioConstraints = {
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl: false,
+        channelCount: 1,
+      };
+      console.info(`[MIC-CONFIG]\nechoCancellation=false\nnoiseSuppression=false\nautoGainControl=false\nchannelCount=1\n`);
+      
+      let stream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
+        console.info(`[MIC-PERMISSION]\nstatus=GRANTED\n`);
+      } catch (micErr) {
+        console.error(`[MIC-PERMISSION]\nstatus=FAILED\nerror=${micErr.name || micErr.message}\n`);
+        throw micErr;
+      }
+
       mediaStreamRef.current = stream;
       setIsMicActive(true);
 
       const audioTrack = stream.getAudioTracks()[0];
       const trackSettings = audioTrack?.getSettings?.() || {};
       const trackLabel = audioTrack?.label || 'Default Microphone';
+
+      console.info(`[MIC-STREAM]\nactive=${audioTrack ? (audioTrack.readyState === 'live') : true}\ntrack_count=1\naudio_tracks=${trackLabel}\n`);
 
       const AudioContextClass = window.AudioContext || window.webkitAudioContext;
       const audioCtx = new AudioContextClass();
@@ -483,6 +502,7 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId }) {
       const nativeSampleRate = audioCtx.sampleRate || 48000;
       const channelCount = trackSettings.channelCount || 1;
 
+      console.info(`[AUDIO-CONTEXT]\nstate=${audioCtx.state}\nsample_rate=${nativeSampleRate}\n`);
       console.info(`[REAL-MIC-START] device=${trackLabel} sample_rate=${nativeSampleRate} channel_count=${channelCount}`);
       console.info(`[REAL-MIC-SAMPLE-RATE] native_sample_rate=${nativeSampleRate}`);
 
@@ -502,21 +522,26 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId }) {
       processor.onaudioprocess = (e) => {
         const rawInput = e.inputBuffer.getChannelData(0);
 
-        // Calculate Real RMS from incoming microphone samples
+        // Calculate Real RMS and Peak from incoming microphone samples
         let rawSum = 0;
+        let rawPeak = 0;
         for (let i = 0; i < rawInput.length; i++) {
-          rawSum += rawInput[i] * rawInput[i];
+          const val = rawInput[i];
+          rawSum += val * val;
+          const absVal = Math.abs(val);
+          if (absVal > rawPeak) rawPeak = absVal;
         }
         const rawRms = Math.sqrt(rawSum / (rawInput.length || 1));
 
         sampleFrameCount++;
         if (sampleFrameCount % 8 === 0 || Math.abs(rawRms - lastLoggedRms) > 0.04) {
           lastLoggedRms = rawRms;
+          console.info(`[AUDIO-DATA]\nsamples=${rawInput.length}\nrms=${rawRms.toFixed(4)}\npeak=${rawPeak.toFixed(4)}\n`);
           console.info(`[REAL-MIC-SAMPLES] sample_rate=${nativeSampleRate} input_samples=${rawInput.length} rms=${rawRms.toFixed(4)}`);
         }
         setRmsVolume(rawRms);
 
-        // Downsample microphone samples from native sample rate (e.g. 48kHz / 44.1kHz) to 16kHz
+        // Downsample microphone samples from native sample rate to 16kHz
         const downsampled = downsampleBuffer(rawInput, nativeSampleRate, targetSampleRate);
 
         // Accumulate downsampled 16kHz samples
@@ -538,11 +563,12 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId }) {
           const winRms = Math.sqrt(winSum / chunk.length);
           const speechDetected = winRms > 0.005;
 
-          console.info(`[REAL-MIC-WINDOW] window_index=${windowCount} native_sample_rate=${nativeSampleRate} output_sample_rate=16000 samples=${chunk.length} duration_ms=2500 rms=${winRms.toFixed(4)}`);
-
           const wavBuffer = encodeWav(chunk, targetSampleRate);
           const wsReady = wsRef.current ? (wsRef.current.readyState === 1 ? 'OPEN' : wsRef.current.readyState) : 'NULL';
 
+          console.info(`[AUDIO-WINDOW]\nwindow_index=${windowCount}\nduration_ms=2500\nsamples=${chunk.length}\n`);
+          console.info(`[WS-SEND]\ncall_id=${activeId}\nbytes=${wavBuffer.byteLength}\nwindow_index=${windowCount}\n`);
+          console.info(`[REAL-MIC-WINDOW] window_index=${windowCount} native_sample_rate=${nativeSampleRate} output_sample_rate=16000 samples=${chunk.length} duration_ms=2500 rms=${winRms.toFixed(4)}`);
           console.info(`[REAL-MIC-SEND] window_index=${windowCount} bytes=${wavBuffer.byteLength} ws_ready_state=${wsReady}`);
 
           if (!speechDetected) {

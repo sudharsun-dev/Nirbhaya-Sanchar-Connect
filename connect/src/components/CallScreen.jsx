@@ -80,15 +80,22 @@ export default function CallScreen({ name, roomName, callId, onEnded }) {
           } else if (event.event === 'RISK_UPDATED') {
             const synthProb = event.synthetic_probability;
             const authScore = event.authenticity_score != null ? event.authenticity_score : (synthProb != null ? Math.max(0, 100 - synthProb) : null);
+            const conf = event.confidence || event.overall_confidence;
+            const verdict = event.label || (synthProb != null ? (synthProb >= 70 ? 'SYNTHETIC' : synthProb <= 30 ? 'AUTHENTIC' : 'SUSPICIOUS') : 'UNCERTAIN');
+            const risk = event.risk_score;
+
+            console.info(`[WS-RECEIVE]\nevent=RISK_UPDATED\n`);
+            console.info(`[UI-UPDATE]\nsynthetic_probability=${synthProb}\nauthenticity=${authScore}\nconfidence=${conf}\nverdict=${verdict}\nrisk_score=${risk}\n`);
+
             setSecurityState((prev) => ({
               ...prev,
               status: 'ACTIVE',
-              riskScore: event.risk_score,
+              riskScore: risk,
               riskLevel: event.risk_level || 'LOW',
-              overallConfidence: event.confidence || event.overall_confidence,
+              overallConfidence: conf,
               syntheticProbability: synthProb,
               authenticityScore: authScore,
-              label: event.label,
+              label: verdict,
               speakerSimilarity: event.speaker_similarity,
               reasons: event.reasons || [],
               recommendedAction: event.action || event.recommended_action || 'CONTINUE',

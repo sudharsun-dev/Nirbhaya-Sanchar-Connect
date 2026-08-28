@@ -69,7 +69,10 @@ class PretrainedDeepfakeDetector:
             class _LazyDeepfakeWav2Vec2Classifier(nn.Module):
                 def __init__(self, backbone_name: str = "facebook/wav2vec2-base"):
                     super().__init__()
-                    self.backbone = Wav2Vec2Model.from_pretrained(backbone_name)
+                    try:
+                        self.backbone = Wav2Vec2Model.from_pretrained(backbone_name, local_files_only=True)
+                    except Exception:
+                        self.backbone = Wav2Vec2Model.from_pretrained(backbone_name)
                     self.classifier = nn.Linear(768, 2)
 
                 def forward(self, input_values: torch.Tensor, attention_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
@@ -82,10 +85,17 @@ class PretrainedDeepfakeDetector:
             print(f"[PRETRAINED-INIT] Initializing {self.model_repo} on {self.device.upper()}...")
             
             # Download/locate cached checkpoint
-            ckpt_path = hf_hub_download(
-                repo_id=self.model_repo,
-                filename=self.checkpoint_filename
-            )
+            try:
+                ckpt_path = hf_hub_download(
+                    repo_id=self.model_repo,
+                    filename=self.checkpoint_filename,
+                    local_files_only=True
+                )
+            except Exception:
+                ckpt_path = hf_hub_download(
+                    repo_id=self.model_repo,
+                    filename=self.checkpoint_filename
+                )
             
             classifier_model = _LazyDeepfakeWav2Vec2Classifier(backbone_name=self.backbone_name)
             checkpoint_data = torch.load(ckpt_path, map_location=self.device)
