@@ -417,7 +417,7 @@ class QAModeUpdateRequest(BaseModel):
 @router.get("/qa/state")
 async def get_qa_state():
     """
-    Retrieves the global QA test state.
+    Retrieves the authoritative database-backed global QA test state.
     Synchronized across all connected browsers and laptops.
     """
     return qa_service.get_state()
@@ -425,10 +425,15 @@ async def get_qa_state():
 @router.post("/qa/state")
 async def set_qa_state(payload: QAModeUpdateRequest):
     """
-    Updates the global QA test state and broadcasts QA_MODE_UPDATED
+    Updates the database-backed global QA test state and broadcasts QA_MODE_UPDATED
     to all connected WebSockets on all active sessions.
     """
-    updated_state = qa_service.set_state(payload.enabled, payload.scenario or "HIGH")
+    scenario = payload.scenario or "HIGH"
+    if scenario not in ["LOW", "MEDIUM", "HIGH"]:
+        raise HTTPException(status_code=400, detail="Invalid scenario. Allowed: LOW, MEDIUM, HIGH")
+
+    updated_state = qa_service.set_state(payload.enabled, scenario)
+    await qa_service.sync_to_db(payload.enabled, scenario)
     sim_data = qa_service.get_simulated_payload() if payload.enabled else None
 
     # Broadcast to all connected clients
@@ -437,13 +442,23 @@ async def set_qa_state(payload: QAModeUpdateRequest):
         "type": "QA_MODE_UPDATED",
         "enabled": updated_state["enabled"],
         "scenario": updated_state["scenario"],
+        "score": updated_state["score"],
+        "synthetic_probability": updated_state["score"],
+        "authenticity": updated_state["authenticity"],
+        "authenticity_score": updated_state["authenticity"],
+        "confidence": updated_state["confidence"],
+        "verdict": updated_state["verdict"],
+        "risk_level": updated_state["risk_level"],
+        "recommended_action": updated_state["recommended_action"],
+        "source": "QA_DATABASE",
         "updated_at": updated_state["updated_at"],
         "simulated_data": sim_data
     })
 
-    print(f"[QA-BROADCAST]\nenabled={updated_state['enabled']}\nscenario={updated_state['scenario']}\n")
+    print(f"[QA-BROADCAST]\nenabled={updated_state['enabled']}\nscenario={updated_state['scenario']}\nscore={updated_state['score']}\n")
     return {
         "status": "SUCCESS",
-        "qa_state": updated_state
+        "qa_state": updated_state,
+        **updated_state
     }
 

@@ -10,151 +10,169 @@ def reset_qa_state():
     yield
     qa_service.set_state(False, "LOW")
 
-def test_qa_default_state():
-    """Verify QA defaults to disabled with LOW scenario."""
+def test_database_qa_default():
+    """Verify default QA state has enabled=False, scenario=LOW, score=15.0, source=QA_DATABASE."""
     qa_service.set_state(False, "LOW")
     state = qa_service.get_state()
     assert state["enabled"] is False
     assert state["scenario"] == "LOW"
+    assert state["score"] == 15.0
+    assert state["authenticity"] == 85.0
+    assert state["confidence"] == 95.0
+    assert state["verdict"] == "AUTHENTIC"
+    assert state["risk_level"] == "LOW"
+    assert state["recommended_action"] == "CONTINUE"
+    assert state["source"] == "QA_DATABASE"
+
+def test_database_qa_high():
+    """Verify setting HIGH QA scenario produces exact database values (95.0 score, 5.0 authenticity)."""
+    state = qa_service.set_state(True, "HIGH")
+    assert state["enabled"] is True
+    assert state["scenario"] == "HIGH"
+    assert state["score"] == 95.0
+    assert state["authenticity"] == 5.0
+    assert state["confidence"] == 98.0
+    assert state["verdict"] == "SYNTHETIC"
+    assert state["risk_level"] == "HIGH"
+    assert state["recommended_action"] == "HOLD"
+    assert state["source"] == "QA_DATABASE"
+
+def test_database_qa_medium():
+    """Verify setting MEDIUM QA scenario produces exact database values (55.0 score, 45.0 authenticity)."""
+    state = qa_service.set_state(True, "MEDIUM")
+    assert state["enabled"] is True
+    assert state["scenario"] == "MEDIUM"
+    assert state["score"] == 55.0
+    assert state["authenticity"] == 45.0
+    assert state["confidence"] == 95.0
+    assert state["verdict"] == "SYNTHETIC"
+    assert state["risk_level"] == "MEDIUM"
+    assert state["recommended_action"] == "VERIFY"
+    assert state["source"] == "QA_DATABASE"
+
+def test_database_qa_low():
+    """Verify setting LOW QA scenario produces exact database values (15.0 score, 85.0 authenticity)."""
+    state = qa_service.set_state(True, "LOW")
+    assert state["enabled"] is True
+    assert state["scenario"] == "LOW"
+    assert state["score"] == 15.0
+    assert state["authenticity"] == 85.0
+    assert state["confidence"] == 95.0
+    assert state["verdict"] == "AUTHENTIC"
+    assert state["risk_level"] == "LOW"
+    assert state["recommended_action"] == "CONTINUE"
+    assert state["source"] == "QA_DATABASE"
+
+def test_database_qa_off():
+    """Verify turning QA OFF disables simulation flag while preserving configuration."""
+    qa_service.set_state(True, "HIGH")
+    state = qa_service.set_state(False, "HIGH")
+    assert state["enabled"] is False
     assert qa_service.is_enabled() is False
 
-def test_qa_get_state():
-    """Verify GET /api/v1/qa/state returns authoritative backend state."""
+def test_qa_api_get():
+    """Verify GET /api/v1/qa/state returns database-backed state with full schema."""
     client = TestClient(app)
     res = client.get("/api/v1/qa/state")
     assert res.status_code == 200
     data = res.json()
     assert "enabled" in data
     assert "scenario" in data
-    assert "updated_at" in data
+    assert "score" in data
+    assert "authenticity" in data
+    assert "confidence" in data
+    assert "verdict" in data
+    assert "risk_level" in data
+    assert "recommended_action" in data
+    assert data["source"] == "QA_DATABASE"
 
-def test_qa_enable_high():
-    """Verify enabling QA state with HIGH scenario."""
-    state = qa_service.set_state(True, "HIGH")
-    assert state["enabled"] is True
-    assert state["scenario"] == "HIGH"
-    assert qa_service.is_enabled() is True
-    assert qa_service.get_scenario() == "HIGH"
-
-def test_qa_enable_medium():
-    """Verify enabling QA state with MEDIUM scenario."""
-    state = qa_service.set_state(True, "MEDIUM")
-    assert state["enabled"] is True
-    assert state["scenario"] == "MEDIUM"
-    assert qa_service.is_enabled() is True
-    assert qa_service.get_scenario() == "MEDIUM"
-
-def test_qa_enable_low():
-    """Verify enabling QA state with LOW scenario."""
-    state = qa_service.set_state(True, "LOW")
-    assert state["enabled"] is True
-    assert state["scenario"] == "LOW"
-    assert qa_service.is_enabled() is True
-    assert qa_service.get_scenario() == "LOW"
-
-def test_qa_disable():
-    """Verify disabling QA state."""
-    qa_service.set_state(True, "HIGH")
-    state = qa_service.set_state(False, "HIGH")
-    assert state["enabled"] is False
-    assert qa_service.is_enabled() is False
+def test_qa_api_post():
+    """Verify POST /api/v1/qa/state updates database state and returns updated record."""
+    client = TestClient(app)
+    post_res = client.post("/api/v1/qa/state", json={"enabled": True, "scenario": "HIGH"})
+    assert post_res.status_code == 200
+    data = post_res.json()
+    assert data["status"] == "SUCCESS"
+    assert data["qa_state"]["enabled"] is True
+    assert data["qa_state"]["scenario"] == "HIGH"
+    assert data["qa_state"]["score"] == 95.0
+    assert data["qa_state"]["authenticity"] == 5.0
+    assert data["qa_state"]["confidence"] == 98.0
+    assert data["qa_state"]["verdict"] == "SYNTHETIC"
+    assert data["qa_state"]["risk_level"] == "HIGH"
+    assert data["qa_state"]["recommended_action"] == "HOLD"
 
 def test_qa_persistence():
-    """Verify REST API GET and POST endpoints persist and retrieve state."""
+    """Verify state persisted via POST is faithfully retrieved via subsequent GET."""
     client = TestClient(app)
-    
-    # Set via POST
-    post_res = client.post("/api/v1/qa/state", json={"enabled": True, "scenario": "MEDIUM"})
-    assert post_res.status_code == 200
-    assert post_res.json()["qa_state"]["enabled"] is True
-    assert post_res.json()["qa_state"]["scenario"] == "MEDIUM"
-
-    # Retrieve via GET
+    client.post("/api/v1/qa/state", json={"enabled": True, "scenario": "MEDIUM"})
     get_res = client.get("/api/v1/qa/state")
     assert get_res.status_code == 200
     data = get_res.json()
     assert data["enabled"] is True
     assert data["scenario"] == "MEDIUM"
+    assert data["score"] == 55.0
+    assert data["authenticity"] == 45.0
 
-def test_qa_high_range():
-    """Verify HIGH QA scenario strictly stays in 93.0 - 98.0 range."""
+def test_qa_high_exact_value():
+    """Verify HIGH scenario always returns exact 95.0 without random variance."""
     qa_service.set_state(True, "HIGH")
-    for _ in range(50):
-        payload = qa_service.get_next_simulated_payload()
-        score = payload["risk_score"]
-        synth = payload["synthetic_probability"]
-        auth = payload["authenticity_score"]
-        assert 93.0 <= score <= 98.0, f"HIGH score {score} out of bounds"
-        assert 93.0 <= synth <= 98.0
-        assert auth == round(100.0 - synth, 1)
+    for _ in range(25):
+        payload = qa_service.get_simulated_payload()
+        assert payload["synthetic_probability"] == 95.0
+        assert payload["authenticity_score"] == 5.0
+        assert payload["authenticity"] == 5.0
+        assert payload["confidence"] == 98.0
+        assert payload["risk_score"] == 95.0
         assert payload["risk_level"] == "HIGH"
+        assert payload["recommended_action"] == "HOLD"
+        assert payload["source"] == "QA_DATABASE"
         assert payload["simulated"] is True
 
-def test_qa_medium_range():
-    """Verify MEDIUM QA scenario strictly stays in 45.0 - 65.0 range."""
+def test_qa_medium_exact_value():
+    """Verify MEDIUM scenario always returns exact 55.0 without random variance."""
     qa_service.set_state(True, "MEDIUM")
-    for _ in range(50):
-        payload = qa_service.get_next_simulated_payload()
-        score = payload["risk_score"]
-        synth = payload["synthetic_probability"]
-        auth = payload["authenticity_score"]
-        assert 45.0 <= score <= 65.0, f"MEDIUM score {score} out of bounds"
-        assert 45.0 <= synth <= 65.0
-        assert auth == round(100.0 - synth, 1)
+    for _ in range(25):
+        payload = qa_service.get_simulated_payload()
+        assert payload["synthetic_probability"] == 55.0
+        assert payload["authenticity_score"] == 45.0
+        assert payload["authenticity"] == 45.0
+        assert payload["confidence"] == 95.0
+        assert payload["risk_score"] == 55.0
         assert payload["risk_level"] == "MEDIUM"
+        assert payload["recommended_action"] == "VERIFY"
+        assert payload["source"] == "QA_DATABASE"
         assert payload["simulated"] is True
 
-def test_qa_low_range():
-    """Verify LOW QA scenario strictly stays in 5.0 - 25.0 range."""
+def test_qa_low_exact_value():
+    """Verify LOW scenario always returns exact 15.0 without random variance."""
     qa_service.set_state(True, "LOW")
-    for _ in range(50):
-        payload = qa_service.get_next_simulated_payload()
-        score = payload["risk_score"]
-        synth = payload["synthetic_probability"]
-        auth = payload["authenticity_score"]
-        assert 5.0 <= score <= 25.0, f"LOW score {score} out of bounds"
-        assert 5.0 <= synth <= 25.0
-        assert auth == round(100.0 - synth, 1)
+    for _ in range(25):
+        payload = qa_service.get_simulated_payload()
+        assert payload["synthetic_probability"] == 15.0
+        assert payload["authenticity_score"] == 85.0
+        assert payload["authenticity"] == 85.0
+        assert payload["confidence"] == 95.0
+        assert payload["risk_score"] == 15.0
         assert payload["risk_level"] == "LOW"
+        assert payload["recommended_action"] == "CONTINUE"
+        assert payload["source"] == "QA_DATABASE"
         assert payload["simulated"] is True
 
-def test_qa_smoothing():
-    """Verify consecutive scores never jump by more than 3.0 points."""
-    qa_service.set_state(True, "HIGH")
-    prev_score = qa_service.get_next_simulated_payload()["risk_score"]
-    for _ in range(50):
-        curr_payload = qa_service.get_next_simulated_payload()
-        curr_score = curr_payload["risk_score"]
-        diff = abs(curr_score - prev_score)
-        assert diff <= 3.001, f"Consecutive jump {diff} exceeded 3.0 points ({prev_score} -> {curr_score})"
-        prev_score = curr_score
-
-def test_qa_websocket_broadcast():
-    """Verify WebSocket client immediately receives QA_MODE_UPDATED on connection."""
-    qa_service.set_state(True, "HIGH")
-    client = TestClient(app)
-    with client.websocket_connect("/ws/analysis/test_call_broadcast") as ws:
-        msg = ws.receive_json()
-        assert msg["event"] == "QA_MODE_UPDATED"
-        assert msg["enabled"] is True
-        assert msg["scenario"] == "HIGH"
-        assert msg["simulated_data"]["risk_level"] == "HIGH"
-        assert 93.0 <= msg["simulated_data"]["risk_score"] <= 98.0
-
-def test_multiple_clients_receive_update():
+def test_websocket_global_broadcast():
     """
     Verify multi-device real-time sync:
-    Client B receives live QA_MODE_UPDATED whenever Client A updates state via POST.
+    Client B receives live QA_MODE_UPDATED with exact database values when Client A updates state via POST.
     """
     client = TestClient(app)
-    with client.websocket_connect("/ws/analysis/client_b_session") as ws_b:
+    with client.websocket_connect("/ws/analysis/client_b_broadcast_session") as ws_b:
         init_msg = ws_b.receive_json()
         assert init_msg["event"] == "QA_MODE_UPDATED"
 
         start_msg = ws_b.receive_json()
         assert start_msg["event"] == "ANALYSIS_STARTED"
 
-        # Client A changes to HIGH
+        # Client A updates to HIGH
         res1 = client.post("/api/v1/qa/state", json={"enabled": True, "scenario": "HIGH"})
         assert res1.status_code == 200
         
@@ -162,10 +180,13 @@ def test_multiple_clients_receive_update():
         assert msg_high["event"] == "QA_MODE_UPDATED"
         assert msg_high["enabled"] is True
         assert msg_high["scenario"] == "HIGH"
-        assert msg_high["simulated_data"]["risk_level"] == "HIGH"
-        assert 93.0 <= msg_high["simulated_data"]["risk_score"] <= 98.0
+        assert msg_high["score"] == 95.0
+        assert msg_high["authenticity"] == 5.0
+        assert msg_high["risk_level"] == "HIGH"
+        assert msg_high["recommended_action"] == "HOLD"
+        assert msg_high["source"] == "QA_DATABASE"
 
-        # Client A changes to MEDIUM
+        # Client A updates to MEDIUM
         res2 = client.post("/api/v1/qa/state", json={"enabled": True, "scenario": "MEDIUM"})
         assert res2.status_code == 200
 
@@ -173,8 +194,11 @@ def test_multiple_clients_receive_update():
         assert msg_med["event"] == "QA_MODE_UPDATED"
         assert msg_med["enabled"] is True
         assert msg_med["scenario"] == "MEDIUM"
-        assert msg_med["simulated_data"]["risk_level"] == "MEDIUM"
-        assert 45.0 <= msg_med["simulated_data"]["risk_score"] <= 65.0
+        assert msg_med["score"] == 55.0
+        assert msg_med["authenticity"] == 45.0
+        assert msg_med["risk_level"] == "MEDIUM"
+        assert msg_med["recommended_action"] == "VERIFY"
+        assert msg_med["source"] == "QA_DATABASE"
 
         # Client A turns QA OFF
         res3 = client.post("/api/v1/qa/state", json={"enabled": False, "scenario": "LOW"})
@@ -184,15 +208,17 @@ def test_multiple_clients_receive_update():
         assert msg_off["event"] == "QA_MODE_UPDATED"
         assert msg_off["enabled"] is False
 
-def test_real_detector_when_qa_off():
-    """Verify when QA is OFF, payload is NOT marked as simulated."""
-    qa_service.set_state(False, "LOW")
-    assert qa_service.is_enabled() is False
-
-def test_qa_override_when_enabled():
-    """Verify when QA is ON, simulated payload produces stable values."""
+def test_new_client_gets_database_state():
+    """Verify newly connecting client receives current database QA state upon WebSocket connection."""
     qa_service.set_state(True, "HIGH")
-    payload = qa_service.get_next_simulated_payload()
-    assert payload["simulated"] is True
-    assert payload["label"] == "SYNTHETIC"
-    assert "SIMULATED" in payload["verdict"]
+    client = TestClient(app)
+    with client.websocket_connect("/ws/analysis/new_client_session") as ws:
+        msg = ws.receive_json()
+        assert msg["event"] == "QA_MODE_UPDATED"
+        assert msg["enabled"] is True
+        assert msg["scenario"] == "HIGH"
+        assert msg["score"] == 95.0
+        assert msg["authenticity"] == 5.0
+        assert msg["risk_level"] == "HIGH"
+        assert msg["recommended_action"] == "HOLD"
+        assert msg["source"] == "QA_DATABASE"

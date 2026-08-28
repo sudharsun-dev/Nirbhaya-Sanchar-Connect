@@ -98,6 +98,15 @@ async def websocket_analysis_endpoint(websocket: WebSocket, analysis_id: str = "
             "type": "QA_MODE_UPDATED",
             "enabled": qa_state["enabled"],
             "scenario": qa_state["scenario"],
+            "score": qa_state["score"],
+            "synthetic_probability": qa_state["score"],
+            "authenticity": qa_state["authenticity"],
+            "authenticity_score": qa_state["authenticity"],
+            "confidence": qa_state["confidence"],
+            "verdict": qa_state["verdict"],
+            "risk_level": qa_state["risk_level"],
+            "recommended_action": qa_state["recommended_action"],
+            "source": "QA_DATABASE",
             "updated_at": qa_state["updated_at"],
             "simulated_data": qa_service.get_simulated_payload() if qa_state["enabled"] else None
         }))

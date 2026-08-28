@@ -125,9 +125,9 @@ export default function SettingsKeyDocs() {
               <span className="text-xs font-mono font-bold text-slate-400">TEST SCENARIO:</span>
               <div className="inline-flex rounded-lg bg-slate-800 p-1 border border-slate-700">
                 {[
-                  { id: 'LOW', label: 'LOW (5–25)', color: 'bg-emerald-600' },
-                  { id: 'MEDIUM', label: 'MEDIUM (45–65)', color: 'bg-amber-600' },
-                  { id: 'HIGH', label: 'HIGH (93–98)', color: 'bg-rose-600' },
+                  { id: 'LOW', label: 'LOW (15.0)', color: 'bg-emerald-600' },
+                  { id: 'MEDIUM', label: 'MEDIUM (55.0)', color: 'bg-amber-600' },
+                  { id: 'HIGH', label: 'HIGH (95.0)', color: 'bg-rose-600' },
                 ].map((sc) => (
                   <button
                     key={sc.id}
@@ -152,7 +152,7 @@ export default function SettingsKeyDocs() {
 
           {saveSuccess && (
             <div className="text-[11px] text-emerald-400 font-mono flex items-center gap-1.5 pt-1">
-              <CheckCircle2 className="w-3.5 h-3.5" /> State successfully saved and broadcast to all connected clients!
+              <CheckCircle2 className="w-3.5 h-3.5" /> State successfully saved to database and broadcast to all connected clients!
             </div>
           )}
         </div>
@@ -164,13 +164,13 @@ export default function SettingsKeyDocs() {
           <div className="flex items-center justify-between border-b border-slate-100 pb-3">
             <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
               <BookOpen className="w-4 h-4 text-indigo-600" />
-              QA TEST CONTROLS SPECIFICATION
+              DATABASE-BACKED QA TEST CONTROLS SPECIFICATION
             </h3>
-            <span className="text-xs font-mono font-bold text-slate-500">VERSION 2.0</span>
+            <span className="text-xs font-mono font-bold text-slate-500">DATABASE SOURCE OF TRUTH</span>
           </div>
 
           <p className="text-xs text-slate-600">
-            <strong>Purpose:</strong> Provides controlled test scenarios for validating the System 2 interface, policy actions, and end-to-end telemetry without altering real AI model weights.
+            <strong>Purpose:</strong> Provides database-backed deterministic test scenarios for validating the System 2 interface, policy actions, and end-to-end telemetry without altering real AI model weights.
           </p>
 
           <div className="bg-amber-50 p-3.5 rounded-xl border border-amber-200 text-xs text-amber-900">
@@ -178,25 +178,25 @@ export default function SettingsKeyDocs() {
               ⚠️ TEST MODE INTEGRITY POLICY
             </p>
             <p className="mt-1 text-amber-800">
-              <strong>"QA results are simulated test values and are not real detector predictions."</strong> When QA mode is enabled, telemetry on Live Analysis displays a prominent <code className="bg-amber-200/60 px-1 py-0.5 rounded font-mono font-bold">SIMULATED</code> badge. Real fraud callbacks and DB persistence of genuine records are automatically bypassed.
+              <strong>"QA results are simulated database test values and are not real detector predictions."</strong> When QA mode is enabled, telemetry on Live Analysis displays a prominent <code className="bg-amber-200/60 px-1 py-0.5 rounded font-mono font-bold">SIMULATED</code> badge. Real fraud callbacks and DB persistence of genuine records are automatically bypassed.
             </p>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
             <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-2">
-              <p className="font-bold text-slate-900 uppercase text-[11px]">Operational Modes</p>
+              <p className="font-bold text-slate-900 uppercase text-[11px]">Operational Modes (Fixed Database Values)</p>
               <div className="space-y-1.5 text-slate-600 text-[11.5px]">
                 <p><strong>OFF:</strong> Real microphone audio is processed continuously through the local AI Voice Authenticity Engine; genuine detector probability and risk scores are displayed in real-time.</p>
-                <p><strong>LOW:</strong> Controlled low-risk test result (<span className="font-mono">5–25</span> range, Action: <span className="font-mono">CONTINUE</span>).</p>
-                <p><strong>MEDIUM:</strong> Controlled medium-risk test result (<span className="font-mono">45–65</span> range, Action: <span className="font-mono">VERIFY IDENTITY</span>).</p>
-                <p><strong>HIGH:</strong> Controlled high-risk test result (<span className="font-mono">93–98</span> range, Action: <span className="font-mono">HOLD / VERIFY</span>).</p>
+                <p><strong>LOW:</strong> Fixed database test result (<span className="font-mono">Score: 15.0</span>, Authenticity: <span className="font-mono">85.0</span>, Action: <span className="font-mono">CONTINUE</span>).</p>
+                <p><strong>MEDIUM:</strong> Fixed database test result (<span className="font-mono">Score: 55.0</span>, Authenticity: <span className="font-mono">45.0</span>, Action: <span className="font-mono">VERIFY</span>).</p>
+                <p><strong>HIGH:</strong> Fixed database test result (<span className="font-mono">Score: 95.0</span>, Authenticity: <span className="font-mono">5.0</span>, Action: <span className="font-mono">HOLD</span>).</p>
               </div>
             </div>
 
             <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-2">
-              <p className="font-bold text-slate-900 uppercase text-[11px]">Score Smoothing Mechanism</p>
+              <p className="font-bold text-slate-900 uppercase text-[11px]">Database Single Source of Truth</p>
               <p className="text-slate-600 text-[11.5px]">
-                Simulated values utilize a controlled random-walk smoothing generator ensuring consecutive analysis windows never jump erratically (maximum step <span className="font-mono">&le; 3.0</span> points), maintaining consistent scenario ranges across all connected browsers.
+                All QA states and metrics are stored in the <span className="font-mono bg-slate-200 px-1 py-0.5 rounded font-bold">qa_control</span> database table. No client-side random numbers are generated. All connected laptops and browsers receive the exact same database records via WebSocket broadcast.
               </p>
             </div>
           </div>

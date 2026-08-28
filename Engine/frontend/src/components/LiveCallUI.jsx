@@ -134,36 +134,36 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId }) {
   const getSimulatedDataForScenario = useCallback((scenario) => {
     if (scenario === 'HIGH') {
       return {
-        synthetic_probability: 98.6,
-        authenticity_score: 1.4,
-        confidence: 0.99,
-        risk_score: 98.6,
+        synthetic_probability: 95.0,
+        authenticity_score: 5.0,
+        confidence: 0.98,
+        risk_score: 95.0,
         risk_level: 'HIGH',
         label: 'SYNTHETIC',
         action: 'HOLD',
-        reasons: ['QA Simulated: High confidence synthetic speech clone anomaly'],
+        reasons: ['QA Database: High-confidence synthetic voice clone identified'],
       };
     } else if (scenario === 'MEDIUM') {
       return {
-        synthetic_probability: 55.4,
-        authenticity_score: 44.6,
-        confidence: 0.85,
-        risk_score: 55.4,
+        synthetic_probability: 55.0,
+        authenticity_score: 45.0,
+        confidence: 0.95,
+        risk_score: 55.0,
         risk_level: 'MEDIUM',
-        label: 'SUSPICIOUS',
+        label: 'SYNTHETIC',
         action: 'VERIFY',
-        reasons: ['QA Simulated: Spectral phase inconsistency & vocal artifact'],
+        reasons: ['QA Database: Spectral phase anomaly and vocoder artifacts detected'],
       };
     } else {
       return {
-        synthetic_probability: 6.8,
-        authenticity_score: 93.2,
+        synthetic_probability: 15.0,
+        authenticity_score: 85.0,
         confidence: 0.95,
-        risk_score: 6.8,
+        risk_score: 15.0,
         risk_level: 'LOW',
         label: 'REAL',
         action: 'CONTINUE',
-        reasons: ['QA Simulated: Natural human vocal characteristics verified'],
+        reasons: ['QA Database: Natural human acoustic profile verified'],
       };
     }
   }, []);

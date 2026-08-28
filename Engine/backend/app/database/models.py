@@ -194,10 +194,16 @@ class FeedbackLog(Base):
     notes = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
-class QAStateRecord(Base):
-    __tablename__ = "qa_state"
+class QAControlRecord(Base):
+    __tablename__ = "qa_control"
 
     id = Column(String, primary_key=True, default="global_qa")
     enabled = Column(Boolean, default=False, nullable=False)
     scenario = Column(String, default="LOW", nullable=False) # LOW, MEDIUM, HIGH
+    score = Column(Float, default=15.0, nullable=False)
+    authenticity = Column(Float, default=85.0, nullable=False)
+    confidence = Column(Float, default=95.0, nullable=False)
+    verdict = Column(String, default="AUTHENTIC", nullable=False)
+    risk_level = Column(String, default="LOW", nullable=False)
+    recommended_action = Column(String, default="CONTINUE", nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
