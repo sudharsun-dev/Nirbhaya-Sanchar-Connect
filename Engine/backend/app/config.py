@@ -83,6 +83,14 @@ class Settings(BaseSettings):
     VOICE_DETECTION_API_KEY: Optional[str] = None
     VOICE_DETECTION_API_URL: Optional[str] = None
 
+    # Resemble AI Streaming Deepfake Detection
+    RESEMBLE_API_KEY: Optional[str] = os.getenv("RESEMBLE_API_KEY")
+    RESEMBLE_STREAM_URL: str = os.getenv("RESEMBLE_STREAM_URL", "wss://stream.resemble.ai/api/v1/detect/audio")
+
+    @property
+    def is_resemble_configured(self) -> bool:
+        return bool(self.RESEMBLE_API_KEY and len(self.RESEMBLE_API_KEY.strip()) > 5 and not self.RESEMBLE_API_KEY.startswith("YOUR_"))
+
     # Speech To Text (ASR)
     ASR_PROVIDER: str = "Nirbhaya MultiLang ASR / Whisper API"
     ASR_MODEL: str = "whisper-base-multilingual"

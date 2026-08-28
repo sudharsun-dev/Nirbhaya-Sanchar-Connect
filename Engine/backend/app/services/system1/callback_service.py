@@ -19,13 +19,17 @@ class CallbackService:
         analysis_id: str,
         risk_output: dict,
         policy_output: dict,
-        verification_required: bool = False
+        verification_required: bool = False,
+        ensemble_res: Optional[dict] = None
     ) -> dict:
         """
         Sends HTTP POST callback payload to System 1.
         """
         if not self.callback_url:
             return {"status": "SKIPPED", "reason": "SYSTEM1_CALLBACK_URL not configured"}
+
+        aasist_data = ensemble_res.get("aasist", {}) if ensemble_res else {}
+        resemble_data = ensemble_res.get("resemble", {}) if ensemble_res else {}
 
         payload = {
             "event": event,
@@ -37,6 +41,9 @@ class CallbackService:
             "speaker_similarity": risk_output.get("speaker_similarity"),
             "model_confidence": risk_output.get("overall_confidence", 0.0),
             "audio_quality": risk_output.get("audio_quality", 1.0),
+            "aasist_synthetic_probability": aasist_data.get("synthetic_probability"),
+            "resemble_synthetic_probability": resemble_data.get("synthetic_probability"),
+            "detector_agreement": ensemble_res.get("detector_agreement", "UNAVAILABLE") if ensemble_res else "UNAVAILABLE",
             "context_score": risk_output.get("context_score"),
             "transaction_score": risk_output.get("transaction_score"),
             "behavior_score": risk_output.get("behavior_score"),

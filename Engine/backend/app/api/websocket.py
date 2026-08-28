@@ -16,6 +16,8 @@ from app.database.models import (
 from app.config import settings
 from app.services.audio.preprocessor import preprocessor
 from app.services.voice_detection.authenticity import voice_authenticity_engine
+from app.services.voice_detection.resemble_detector import resemble_detector
+from app.services.voice_detection.ensemble import voice_ensemble
 from app.services.speaker.verifier import speaker_verifier
 from app.services.asr.asr_engine import asr_engine
 from app.services.context.context_engine import context_engine
@@ -129,11 +131,13 @@ async def websocket_analysis_endpoint(websocket: WebSocket, analysis_id: str):
                 try:
                     print(f"[TRACE-AASIST-START] call_id={analysis_id} window_index={window_index} samples={samples_count}")
                     print(f"[S2-AASIST-START] call_id={analysis_id} window={window_index} samples={samples_count}")
+                    print(f"[AASIST-START] model=AASIST sample_rate={sr} samples={samples_count} window_index={window_index}")
                     print(f"[AASIST-INPUT] shape={list(tensor.shape) if tensor is not None else []} dtype={str(tensor.dtype) if tensor is not None else 'unknown'} device={str(tensor.device) if tensor is not None else 'cpu'} sample_rate={sr} samples={samples_count}")
                     voice_res = voice_authenticity_engine.analyze_audio(processed_audio)
                     print(f"[TRACE-AASIST-RESULT] call_id={analysis_id} window_index={window_index} synthetic_probability={voice_res.get('synthetic_probability')} authenticity_score={voice_res.get('authenticity_score')} confidence={voice_res.get('confidence')}")
                     print(f"[S2-AASIST-RESULT] call_id={analysis_id} window={window_index} status={voice_res.get('status')} synthetic_probability={voice_res.get('synthetic_probability')} authenticity_score={voice_res.get('authenticity_score')} confidence={voice_res.get('confidence')}")
                     print(f"[AASIST-OUTPUT] raw_output={{'spoof': {voice_res.get('spoof_logit')}, 'bonafide': {voice_res.get('bonafide_logit')}}} synthetic_probability={voice_res.get('synthetic_probability')} authenticity_score={voice_res.get('authenticity_score')} confidence={voice_res.get('confidence')}")
+                    print(f"[AASIST-RESULT] synthetic_probability={voice_res.get('synthetic_probability')} authenticity_score={voice_res.get('authenticity_score')} confidence={voice_res.get('confidence')}")
                 except Exception as aasist_err:
                     print(f"[AASIST-ERROR] call_id={analysis_id} window={window_index} error={aasist_err}")
                     voice_res = {
@@ -148,7 +152,35 @@ async def websocket_analysis_endpoint(websocket: WebSocket, analysis_id: str):
                         "status_detail": str(aasist_err)
                     }
 
-                # 3. Speaker Verification (Independent)
+                # 3. Resemble AI Streaming Deepfake Detection (Independent)
+                resemble_res = None
+                try:
+                    resemble_res = await resemble_detector.send_audio_chunk(
+                        call_id=analysis_id,
+                        audio_bytes=audio_bytes,
+                        window_index=window_index
+                    )
+                except Exception as res_err:
+                    print(f"[RESEMBLE-ERROR] call_id={analysis_id} window={window_index} error={res_err}")
+                    resemble_res = {
+                        "available": False,
+                        "status": "ERROR",
+                        "label": None,
+                        "synthetic_probability": None,
+                        "aggregated_score": None,
+                        "consistency": None,
+                        "detail": str(res_err)
+                    }
+
+                # 4. Multi-Model Voice Ensemble (AASIST + Resemble)
+                print(f"[ENSEMBLE-INPUT] call_id={analysis_id} aasist_synth={voice_res.get('synthetic_probability')} resemble_synth={resemble_res.get('synthetic_probability') if resemble_res else None}")
+                ensemble_res = voice_ensemble.combine_voice_detectors(
+                    aasist_res=voice_res,
+                    resemble_res=resemble_res
+                )
+                print(f"[ENSEMBLE-RESULT] call_id={analysis_id} synthetic_probability={ensemble_res.get('synthetic_probability')} agreement={ensemble_res.get('detector_agreement')} confidence={ensemble_res.get('confidence')}")
+
+                # 5. Speaker Verification (Independent)
                 speaker_res = None
                 try:
                     speaker_res = speaker_verifier.compare_speaker(processed_audio)
@@ -161,7 +193,7 @@ async def websocket_analysis_endpoint(websocket: WebSocket, analysis_id: str):
                         "status": "SPEAKER_UNAVAILABLE"
                     }
 
-                # 4. ASR Speech-To-Text (Independent)
+                # 6. ASR Speech-To-Text (Independent)
                 asr_res = None
                 try:
                     asr_res = await asr_engine.transcribe(audio_bytes)
@@ -174,7 +206,7 @@ async def websocket_analysis_endpoint(websocket: WebSocket, analysis_id: str):
                         "status": "ASR_UNAVAILABLE"
                     }
 
-                # 5. Context Intelligence (Independent)
+                # 7. Context Intelligence (Independent)
                 context_res = None
                 try:
                     context_res = context_engine.analyze_text(asr_res.get("text", "") if asr_res else "")
@@ -187,7 +219,7 @@ async def websocket_analysis_endpoint(websocket: WebSocket, analysis_id: str):
                         "risk_flags": []
                     }
 
-                # 6. Behavioral Signals (Independent)
+                # 8. Behavioral Signals (Independent)
                 behavior_res = None
                 try:
                     behavior_res = behavior_engine.analyze_behavior(processed_audio, text_transcript=asr_res.get("text", "") if asr_res else "")
@@ -198,15 +230,15 @@ async def websocket_analysis_endpoint(websocket: WebSocket, analysis_id: str):
                         "anomalies": []
                     }
 
-                # 7. Deterministic Risk & Policy Computation
-                synth_val = voice_res.get("synthetic_probability") if voice_res else None
+                # 9. Deterministic Risk & Policy Computation using Ensemble Voice Signal
+                synth_val = ensemble_res.get("synthetic_probability")
                 spk_val = speaker_res.get("similarity_score") if speaker_res else None
                 ctx_val = context_res.get("context_score", 0.0) if context_res else 0.0
                 beh_val = behavior_res.get("behavior_score", 0.0) if behavior_res else 0.0
 
                 print(f"[RISK-INPUT] synthetic_probability={synth_val} speaker_similarity={spk_val} context_score={ctx_val} behavior_score={beh_val} transaction_score=None")
                 risk_output = risk_engine.compute_risk(
-                    voice_result=voice_res,
+                    voice_result=ensemble_res,
                     speaker_result=speaker_res,
                     context_result=context_res,
                     transaction_result=None,
@@ -214,14 +246,14 @@ async def websocket_analysis_endpoint(websocket: WebSocket, analysis_id: str):
                 )
                 policy_output = policy_engine.evaluate(risk_output=risk_output, profile_name="BANK")
                 pipeline_latency_ms = round((time.time() - start_pipeline_time) * 1000, 2)
-                auth_score = round(100.0 - risk_output["synthetic_probability"], 2) if risk_output["synthetic_probability"] is not None else None
+                auth_score = ensemble_res.get("authenticity_score")
 
                 print(f"[TRACE-RISK] call_id={analysis_id} window_index={window_index} synthetic_probability={risk_output.get('synthetic_probability')} authenticity_score={auth_score} confidence={risk_output.get('overall_confidence')} risk_score={risk_output.get('risk_score')} risk_level={risk_output.get('risk_level')} recommended_action={policy_output.get('recommended_action')}")
                 print(f"[S2-RISK-RESULT] call_id={analysis_id} window={window_index} risk_score={risk_output.get('risk_score')} risk_level={risk_output.get('risk_level')} action={policy_output.get('recommended_action')} synthetic_probability={risk_output.get('synthetic_probability')}")
                 print(f"[RISK-OUTPUT] risk_score={risk_output.get('risk_score')} risk_level={risk_output.get('risk_level')} overall_confidence={risk_output.get('overall_confidence')}")
                 print(f"[RISK-ENGINE] call_id={analysis_id} synthetic_probability={risk_output.get('synthetic_probability')} speaker_score={risk_output.get('speaker_similarity')} context_score={risk_output.get('context_score')} behavior_score={risk_output.get('behavior_score')} risk_score={risk_output.get('risk_score')} risk_level={risk_output.get('risk_level')} action={policy_output.get('recommended_action')}")
 
-                # 8. Broadcast AUDIO_PROCESSED
+                # 10. Broadcast AUDIO_PROCESSED
                 await manager.broadcast_event(analysis_id, {
                     "event": "AUDIO_PROCESSED",
                     "call_id": analysis_id,
@@ -233,7 +265,7 @@ async def websocket_analysis_endpoint(websocket: WebSocket, analysis_id: str):
                     "processing_latency_ms": pipeline_latency_ms
                 })
 
-                # 9. Broadcast RISK_UPDATED
+                # 11. Broadcast Multi-Model RISK_UPDATED
                 risk_event_payload = {
                     "event": "RISK_UPDATED",
                     "call_id": analysis_id,
@@ -244,6 +276,14 @@ async def websocket_analysis_endpoint(websocket: WebSocket, analysis_id: str):
                     "overall_confidence": risk_output["overall_confidence"],
                     "synthetic_probability": risk_output["synthetic_probability"],
                     "authenticity_score": auth_score,
+                    "aasist": ensemble_res["aasist"],
+                    "resemble": ensemble_res["resemble"],
+                    "ensemble": {
+                        "synthetic_probability": ensemble_res["synthetic_probability"],
+                        "confidence": ensemble_res["confidence"],
+                        "detector_agreement": ensemble_res["detector_agreement"],
+                        "method": ensemble_res["method"]
+                    },
                     "speaker_similarity": risk_output["speaker_similarity"],
                     "context_score": risk_output["context_score"],
                     "reasons": risk_output["reasons"],
@@ -285,7 +325,8 @@ async def websocket_analysis_endpoint(websocket: WebSocket, analysis_id: str):
                         analysis_id=analysis_id,
                         risk_output=risk_output,
                         policy_output=policy_output,
-                        verification_required=policy_output["verification_required"]
+                        verification_required=policy_output["verification_required"],
+                        ensemble_res=ensemble_res
                     )
                     print(f"[TRACE-SYSTEM1-CALLBACK] call_id={analysis_id} window_index={window_index} risk_score={risk_output['risk_score']} risk_level={risk_output['risk_level']} status={cb_res.get('status')}")
                     print(f"[CALLBACK] status={cb_res.get('status')} HTTP={cb_res.get('http_status')} error={cb_res.get('error')}")
@@ -390,8 +431,20 @@ async def websocket_analysis_endpoint(websocket: WebSocket, analysis_id: str):
 
     except WebSocketDisconnect:
         manager.disconnect(analysis_id, websocket)
+        try:
+            await resemble_detector.close_stream(analysis_id)
+        except Exception:
+            pass
     except Exception as e:
         logger.error(f"[WS EXCEPTION] WebSocket error: {e}")
         manager.disconnect(analysis_id, websocket)
+        try:
+            await resemble_detector.close_stream(analysis_id)
+        except Exception:
+            pass
     finally:
         manager.disconnect(analysis_id, websocket)
+        try:
+            await resemble_detector.close_stream(analysis_id)
+        except Exception:
+            pass

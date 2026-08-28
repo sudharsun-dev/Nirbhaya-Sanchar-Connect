@@ -31,6 +31,10 @@ export default function CallScreen({ name, roomName, callId, onEnded }) {
     riskLevel: 'LOW',
     overallConfidence: null,
     syntheticProbability: null,
+    aasistSynthetic: null,
+    resembleSynthetic: null,
+    resembleStatus: null,
+    detectorAgreement: null,
     speakerSimilarity: null,
     reasons: [],
     recommendedAction: 'CONTINUE',
@@ -81,6 +85,10 @@ export default function CallScreen({ name, roomName, callId, onEnded }) {
               riskLevel: event.risk_level || 'LOW',
               overallConfidence: event.overall_confidence,
               syntheticProbability: event.synthetic_probability,
+              aasistSynthetic: event.aasist?.synthetic_probability != null ? event.aasist.synthetic_probability : (event.synthetic_probability),
+              resembleSynthetic: event.resemble?.synthetic_probability,
+              resembleStatus: event.resemble?.status || (event.resemble?.available ? 'ACTIVE' : 'NOT CONFIGURED'),
+              detectorAgreement: event.ensemble?.detector_agreement || 'UNAVAILABLE',
               speakerSimilarity: event.speaker_similarity,
               reasons: event.reasons || [],
               recommendedAction: event.recommended_action || 'CONTINUE',
@@ -245,8 +253,8 @@ export default function CallScreen({ name, roomName, callId, onEnded }) {
                 : 'AI Voice Shield Initializing...'}
             </strong>
             <small>
-              {formatPercent(securityState.syntheticProbability, 1) !== null
-                ? `Synthetic Voice Prob: ${formatPercent(securityState.syntheticProbability, 1)}% · Windows: ${securityState.windowsAnalyzed || 0}`
+              {securityState.aasistSynthetic !== null || securityState.syntheticProbability !== null
+                ? `AASIST: ${formatPercent(securityState.aasistSynthetic, 1) !== null ? formatPercent(securityState.aasistSynthetic, 1) + '%' : '—'} · RESEMBLE: ${securityState.resembleSynthetic !== null ? formatPercent(securityState.resembleSynthetic, 1) + '%' : (securityState.resembleStatus || 'UNAVAILABLE')} · Windows: ${securityState.windowsAnalyzed || 0}`
                 : (securityState.windowsAnalyzed || 0) > 0
                 ? `Analyzing real audio (${securityState.windowsAnalyzed} windows)`
                 : 'Streaming real microphone audio'}
@@ -259,7 +267,7 @@ export default function CallScreen({ name, roomName, callId, onEnded }) {
         {showSecurityDrawer && (
           <div className="security-details-drawer">
             <div className="drawer-header">
-              <h3>NIRBHAYA SANCHAR SECURITY INTELLIGENCE</h3>
+              <h3>NIRBHAYA SANCHAR MULTI-MODEL SECURITY</h3>
               <span className={`risk-tag ${String(securityState.riskLevel || 'low').toLowerCase()}`}>{securityState.riskLevel || 'LOW'} RISK</span>
             </div>
 
@@ -269,12 +277,20 @@ export default function CallScreen({ name, roomName, callId, onEnded }) {
                 <span className="value">{formatScore(securityState.riskScore, 1) !== null ? `${formatScore(securityState.riskScore, 1)}/100` : '—'}</span>
               </div>
               <div className="metric-box">
-                <span className="label">SYNTHETIC SPEECH</span>
+                <span className="label">ENSEMBLE SYNTHETIC</span>
                 <span className="value">{formatPercent(securityState.syntheticProbability, 1) !== null ? `${formatPercent(securityState.syntheticProbability, 1)}%` : 'Processing'}</span>
               </div>
               <div className="metric-box">
-                <span className="label">SPEAKER MATCH</span>
-                <span className="value">{formatPercent(securityState.speakerSimilarity, 1) !== null ? `${formatPercent(securityState.speakerSimilarity, 1)}%` : 'No Enrolled Profile'}</span>
+                <span className="label">AASIST MODEL</span>
+                <span className="value">{formatPercent(securityState.aasistSynthetic, 1) !== null ? `${formatPercent(securityState.aasistSynthetic, 1)}%` : 'Processing'}</span>
+              </div>
+              <div className="metric-box">
+                <span className="label">RESEMBLE AI</span>
+                <span className="value">{formatPercent(securityState.resembleSynthetic, 1) !== null ? `${formatPercent(securityState.resembleSynthetic, 1)}%` : (securityState.resembleStatus || 'UNAVAILABLE')}</span>
+              </div>
+              <div className="metric-box">
+                <span className="label">DETECTOR AGREEMENT</span>
+                <span className="value">{securityState.detectorAgreement || 'UNAVAILABLE'}</span>
               </div>
               <div className="metric-box">
                 <span className="label">AI CONFIDENCE</span>

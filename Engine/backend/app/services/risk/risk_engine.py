@@ -32,7 +32,7 @@ class RiskEngine:
         confidence_factors = []
         reasons = []
 
-        # 1. Voice Authenticity Signal (Synthetic Speech Anti-Spoofing)
+        # 1. Voice Authenticity Signal (Synthetic Speech Anti-Spoofing / Ensemble)
         synth_prob = None
         if voice_result and voice_result.get("status") == "SUCCESS":
             synth_prob = voice_result.get("synthetic_probability")
@@ -44,6 +44,10 @@ class RiskEngine:
                     reasons.append(f"Elevated synthetic-speech / voice impersonation signal ({synth_prob:.1f}% estimated synthetic probability)")
                 elif synth_prob >= 40.0:
                     reasons.append(f"Moderate synthetic-speech signal detected ({synth_prob:.1f}% estimated synthetic probability)")
+                
+                # Check for multi-model discrepancy reasons
+                for d_reason in voice_result.get("discrepancy_reasons", []):
+                    reasons.append(d_reason)
 
         # 2. Speaker Verification Signal
         speaker_sim = None

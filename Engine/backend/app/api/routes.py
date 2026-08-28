@@ -22,6 +22,7 @@ from app.schemas.schemas import (
 
 from app.services.audio.preprocessor import preprocessor
 from app.services.voice_detection.authenticity import voice_authenticity_engine
+from app.services.voice_detection.resemble_detector import resemble_detector
 from app.services.speaker.verifier import speaker_verifier
 from app.services.asr.asr_engine import asr_engine
 from app.services.context.context_engine import context_engine
@@ -88,6 +89,16 @@ async def get_system_health():
                     "weights_loaded": voice_authenticity_engine.weights_loaded,
                     "weights_sha256": voice_authenticity_engine.weights_sha256,
                     "total_parameters": voice_authenticity_engine.total_parameters
+                }
+            ),
+            "resemble": ServiceHealthStatus(
+                status="CONFIGURED" if resemble_detector.is_configured else "NOT_CONFIGURED",
+                message="Resemble AI streaming detector configured" if resemble_detector.is_configured else "RESEMBLE_API_KEY not configured",
+                details={
+                    "provider": "Resemble AI",
+                    "model": "Resemble Streaming Detect",
+                    "endpoint": resemble_detector.stream_url,
+                    "configured": resemble_detector.is_configured
                 }
             ),
             "speaker_verifier": ServiceHealthStatus(status=speaker_status, details={"model": speaker_verifier.model_name}),
