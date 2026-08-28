@@ -399,6 +399,7 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId }) {
       console.info(`[TRACE-ANALYSIS] call_id=${activeId} analysis_id=${activeId}`);
 
       // 1. Notify Backend Start
+      let targetId = activeId;
       try {
         const startRes = await startAnalysis({
           call_id: activeId,
@@ -406,14 +407,20 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId }) {
           receiver_id: callState.receiverId,
           channel: callState.channel,
         });
-        console.info(`[TRACE-ANALYSIS-START] status=${startRes?.status || 'STARTED'} call_id=${activeId} analysis_id=${startRes?.analysis_id || activeId}`);
+        if (startRes && startRes.analysis_id) {
+          targetId = startRes.analysis_id;
+        }
+        console.info(`[TRACE-ANALYSIS-START] status=${startRes?.status || 'STARTED'} call_id=${activeId} analysis_id=${targetId}`);
       } catch (e) {
         console.warn('[SYSTEM 2] Start analysis notification warning:', e);
         console.info(`[TRACE-ANALYSIS-START] status=STARTED call_id=${activeId} analysis_id=${activeId}`);
       }
 
+      setAnalysisId(targetId);
+      currentSubscribedCallIdRef.current = targetId;
+
       // 2. Connect WebSocket
-      connectWebSocket(activeId);
+      connectWebSocket(targetId);
 
       // 3. Acquire Real Microphone Audio Track
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
