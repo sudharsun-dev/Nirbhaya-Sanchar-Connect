@@ -1,6 +1,7 @@
 import time
 import httpx
 from datetime import datetime
+from typing import Optional
 from app.config import settings
 
 class CallbackService:
@@ -20,7 +21,7 @@ class CallbackService:
         risk_output: dict,
         policy_output: dict,
         verification_required: bool = False,
-        ensemble_res: Optional[dict] = None,
+        resemble_res: Optional[dict] = None,
         window_index: int = 1
     ) -> dict:
         """
@@ -29,37 +30,25 @@ class CallbackService:
         if not self.callback_url:
             return {"status": "SKIPPED", "reason": "SYSTEM1_CALLBACK_URL not configured"}
 
-        aasist_data = ensemble_res.get("aasist", {}) if ensemble_res else {}
-        resemble_data = ensemble_res.get("resemble", {}) if ensemble_res else {}
         synth_prob = risk_output.get("synthetic_probability")
-        auth_score = round(100.0 - synth_prob, 2) if synth_prob is not None else None
+        auth_score = risk_output.get("authenticity_score")
+        label = resemble_res.get("label") if resemble_res else ("FAKE" if synth_prob and synth_prob >= 50.0 else "REAL" if synth_prob is not None else None)
 
         payload = {
             "event": event,
             "call_id": call_id,
             "analysis_id": analysis_id,
             "window_index": window_index,
-            "risk_score": risk_output.get("risk_score", 0.0),
-            "risk_level": risk_output.get("risk_level", "LOW"),
-            "action": policy_output.get("recommended_action", "CONTINUE"),
-            "recommended_action": policy_output.get("recommended_action", "CONTINUE"),
-            "policy_decision": policy_output.get("recommended_action", "CONTINUE"),
+            "detector": "RESEMBLE",
             "synthetic_probability": synth_prob,
             "authenticity_score": auth_score,
-            "confidence": risk_output.get("overall_confidence", 0.0),
-            "model_confidence": risk_output.get("overall_confidence", 0.0),
+            "confidence": risk_output.get("overall_confidence"),
+            "risk_score": risk_output.get("risk_score"),
+            "risk_level": risk_output.get("risk_level", "LOW"),
+            "action": policy_output.get("recommended_action", risk_output.get("action", "CONTINUE")),
+            "recommended_action": policy_output.get("recommended_action", risk_output.get("action", "CONTINUE")),
+            "label": label,
             "speaker_similarity": risk_output.get("speaker_similarity"),
-            "audio_quality": risk_output.get("audio_quality", 1.0),
-            "detectors": {
-                "aasist": aasist_data.get("synthetic_probability") is not None or aasist_data.get("status") == "SUCCESS",
-                "resemble": resemble_data.get("synthetic_probability") is not None or resemble_data.get("status") in ["ACTIVE", "SUCCESS"]
-            },
-            "aasist_synthetic_probability": aasist_data.get("synthetic_probability"),
-            "resemble_synthetic_probability": resemble_data.get("synthetic_probability"),
-            "detector_agreement": ensemble_res.get("detector_agreement", "UNAVAILABLE") if ensemble_res else "UNAVAILABLE",
-            "context_score": risk_output.get("context_score"),
-            "transaction_score": risk_output.get("transaction_score"),
-            "behavior_score": risk_output.get("behavior_score"),
             "reasons": policy_output.get("reasons", risk_output.get("reasons", [])),
             "verification_required": verification_required,
             "timestamp": datetime.utcnow().isoformat()
@@ -86,3 +75,4 @@ class CallbackService:
             }
 
 callback_service = CallbackService()
+

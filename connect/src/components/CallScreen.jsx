@@ -78,20 +78,20 @@ export default function CallScreen({ name, roomName, callId, onEnded }) {
               audioQuality: event.audio_quality_score,
             }))
           } else if (event.event === 'RISK_UPDATED') {
+            const synthProb = event.synthetic_probability;
+            const authScore = event.authenticity_score != null ? event.authenticity_score : (synthProb != null ? Math.max(0, 100 - synthProb) : null);
             setSecurityState((prev) => ({
               ...prev,
               status: 'ACTIVE',
               riskScore: event.risk_score,
               riskLevel: event.risk_level || 'LOW',
-              overallConfidence: event.overall_confidence,
-              syntheticProbability: event.synthetic_probability,
-              aasistSynthetic: event.aasist?.synthetic_probability != null ? event.aasist.synthetic_probability : (event.synthetic_probability),
-              resembleSynthetic: event.resemble?.synthetic_probability,
-              resembleStatus: event.resemble?.status || (event.resemble?.available ? 'ACTIVE' : 'NOT CONFIGURED'),
-              detectorAgreement: event.ensemble?.detector_agreement || 'UNAVAILABLE',
+              overallConfidence: event.confidence || event.overall_confidence,
+              syntheticProbability: synthProb,
+              authenticityScore: authScore,
+              label: event.label,
               speakerSimilarity: event.speaker_similarity,
               reasons: event.reasons || [],
-              recommendedAction: event.recommended_action || 'CONTINUE',
+              recommendedAction: event.action || event.recommended_action || 'CONTINUE',
             }))
           } else if (event.event === 'ALERT_CREATED') {
             setSecurityState((prev) => ({
@@ -148,24 +148,18 @@ export default function CallScreen({ name, roomName, callId, onEnded }) {
           if (result.microphone?.mediaStreamTrack) {
             stopAudioTap = startAudioStreamToEngine(effectiveCallId, result.microphone.mediaStreamTrack, {
               onChunkSent: ({ windowIndex, durationMs }) => {
-                console.info(`[SYSTEM 1] Audio chunk #${windowIndex} (${durationMs}ms) sent to System 2`)
+                console.info(`[SYSTEM 1] Streamed audio window #${windowIndex} (${durationMs}ms) to System 2`);
               },
-            })
+              onError: (tapErr) => {
+                console.warn('[SYSTEM 1] Audio tap error:', tapErr);
+              }
+            });
           }
-        } else {
-          disconnectFromRoom(result.room)
         }
-      } catch (reason) {
-        if (active) {
-          setStatus('error')
-          const msg = String(reason?.message || '')
-          if (msg.toLowerCase().includes('permission') || msg.toLowerCase().includes('notallowed') || msg.toLowerCase().includes('microphone')) {
-            setError('Microphone permission required for secure voice analysis.')
-          } else {
-            setError(msg || 'Unable to join this call.')
-          }
-          setSecurityState((prev) => ({ ...prev, status: 'OFFLINE' }))
-        }
+      } catch (err) {
+        if (!active) return
+        setError(err.message || 'Failed to initialize secure call connection')
+        setStatus('disconnected')
       }
     }
 
@@ -175,9 +169,11 @@ export default function CallScreen({ name, roomName, callId, onEnded }) {
       active = false
       stopAudioTap()
       closeEngineSocket()
-      disconnectFromRoom(currentConnection?.room)
+      if (currentConnection) {
+        currentConnection.disconnect()
+      }
     }
-  }, [name, roomName, retryCount, effectiveCallId])
+  }, [roomName, name, effectiveCallId])
 
   useEffect(() => {
     if (status !== 'connected') return undefined
@@ -215,7 +211,7 @@ export default function CallScreen({ name, roomName, callId, onEnded }) {
   }, [effectiveCallId]);
 
   // Determine Security Badge Colors
-  const riskVal = securityState.riskScore !== null && !isNaN(Number(securityState.riskScore)) ? Number(securityState.riskScore) : null
+  const riskVal = securityState.riskScore
   const isHighRisk = securityState.riskLevel === 'HIGH' || (riskVal !== null && riskVal >= 70)
   const isMediumRisk = securityState.riskLevel === 'MEDIUM' || (riskVal !== null && riskVal >= 30 && riskVal < 70)
 
@@ -246,18 +242,20 @@ export default function CallScreen({ name, roomName, callId, onEnded }) {
             <strong>
               {formatScore(securityState.riskScore, 0) !== null
                 ? `AI Security: Risk ${formatScore(securityState.riskScore, 0)}/100 (${securityState.riskLevel || 'LOW'})`
+                : securityState.riskLevel === 'NO_VOICE'
+                ? 'AI Security: NO VOICE DETECTED'
                 : securityState.status === 'ACTIVE'
-                ? 'AI Voice Monitoring Active'
+                ? 'AI Voice Monitoring Active (Waiting for Voice)'
                 : securityState.status === 'OFFLINE'
                 ? 'AI SECURITY ENGINE OFFLINE'
                 : 'AI Voice Shield Initializing...'}
             </strong>
             <small>
-              {securityState.aasistSynthetic !== null || securityState.syntheticProbability !== null
-                ? `AASIST: ${formatPercent(securityState.aasistSynthetic, 1) !== null ? formatPercent(securityState.aasistSynthetic, 1) + '%' : '—'} · RESEMBLE: ${securityState.resembleSynthetic !== null ? formatPercent(securityState.resembleSynthetic, 1) + '%' : (securityState.resembleStatus || 'UNAVAILABLE')} · Windows: ${securityState.windowsAnalyzed || 0}`
+              {securityState.syntheticProbability !== null
+                ? `RESEMBLE AI: ${formatPercent(securityState.syntheticProbability, 1)}% · AUTHENTICITY: ${formatPercent(securityState.authenticityScore, 1)}% · Action: ${securityState.recommendedAction || 'CONTINUE'}`
                 : (securityState.windowsAnalyzed || 0) > 0
-                ? `Analyzing real audio (${securityState.windowsAnalyzed} windows)`
-                : 'Streaming real microphone audio'}
+                ? `Streaming real audio (${securityState.windowsAnalyzed} windows analyzed)`
+                : 'Streaming real microphone audio to Resemble AI'}
             </small>
           </div>
           <span className="hud-toggle">{showSecurityDrawer ? '▲' : '▼'}</span>
@@ -267,7 +265,7 @@ export default function CallScreen({ name, roomName, callId, onEnded }) {
         {showSecurityDrawer && (
           <div className="security-details-drawer">
             <div className="drawer-header">
-              <h3>NIRBHAYA SANCHAR MULTI-MODEL SECURITY</h3>
+              <h3>NIRBHAYA SANCHAR RESEMBLE AI SECURITY</h3>
               <span className={`risk-tag ${String(securityState.riskLevel || 'low').toLowerCase()}`}>{securityState.riskLevel || 'LOW'} RISK</span>
             </div>
 
@@ -277,24 +275,24 @@ export default function CallScreen({ name, roomName, callId, onEnded }) {
                 <span className="value">{formatScore(securityState.riskScore, 1) !== null ? `${formatScore(securityState.riskScore, 1)}/100` : '—'}</span>
               </div>
               <div className="metric-box">
-                <span className="label">ENSEMBLE SYNTHETIC</span>
+                <span className="label">RESEMBLE SYNTHETIC</span>
                 <span className="value">{formatPercent(securityState.syntheticProbability, 1) !== null ? `${formatPercent(securityState.syntheticProbability, 1)}%` : 'Processing'}</span>
               </div>
               <div className="metric-box">
-                <span className="label">AASIST MODEL</span>
-                <span className="value">{formatPercent(securityState.aasistSynthetic, 1) !== null ? `${formatPercent(securityState.aasistSynthetic, 1)}%` : 'Processing'}</span>
+                <span className="label">AUTHENTICITY</span>
+                <span className="value">{formatPercent(securityState.authenticityScore, 1) !== null ? `${formatPercent(securityState.authenticityScore, 1)}%` : '—'}</span>
               </div>
               <div className="metric-box">
-                <span className="label">RESEMBLE AI</span>
-                <span className="value">{formatPercent(securityState.resembleSynthetic, 1) !== null ? `${formatPercent(securityState.resembleSynthetic, 1)}%` : (securityState.resembleStatus || 'UNAVAILABLE')}</span>
-              </div>
-              <div className="metric-box">
-                <span className="label">DETECTOR AGREEMENT</span>
-                <span className="value">{securityState.detectorAgreement || 'UNAVAILABLE'}</span>
+                <span className="label">VERDICT LABEL</span>
+                <span className="value">{securityState.label || (securityState.riskLevel === 'NO_VOICE' ? 'NO VOICE' : 'ANALYZING')}</span>
               </div>
               <div className="metric-box">
                 <span className="label">AI CONFIDENCE</span>
                 <span className="value">{securityState.overallConfidence !== null && !isNaN(Number(securityState.overallConfidence)) ? `${(Number(securityState.overallConfidence) * 100).toFixed(0)}%` : '—'}</span>
+              </div>
+              <div className="metric-box">
+                <span className="label">POLICY ACTION</span>
+                <span className="value">{securityState.recommendedAction || 'CONTINUE'}</span>
               </div>
             </div>
 
@@ -311,7 +309,7 @@ export default function CallScreen({ name, roomName, callId, onEnded }) {
 
             <div className="policy-recommendation">
               <strong>Policy Action: </strong>
-              <span>{securityState.recommendedAction || 'ALLOW & MONITOR'}</span>
+              <span>{securityState.recommendedAction || 'CONTINUE'}</span>
             </div>
           </div>
         )}

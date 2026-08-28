@@ -35,7 +35,7 @@ export default function Dashboard({ onStartCallClick, onSelectCall }) {
 
   const isOnline = health?.status === 'ONLINE';
   const isDbOnline = health?.services?.database?.status === 'ONLINE';
-  const isAasistLoaded = health?.services?.voice_ai?.status === 'ONLINE';
+  const isResembleConfigured = health?.services?.resemble?.status === 'CONFIGURED';
 
   return (
     <div className="space-y-6">
@@ -83,8 +83,8 @@ export default function Dashboard({ onStartCallClick, onSelectCall }) {
           <div className="bg-slate-950/60 p-2.5 rounded-lg border border-slate-800 flex items-center gap-2.5">
             <Cpu className="w-4 h-4 text-cyan-400" />
             <div>
-              <p className="text-[10px] text-slate-400 font-mono uppercase">AASIST MODEL</p>
-              <p className="text-xs font-bold text-slate-100">{isAasistLoaded ? 'LOADED' : 'INITIALIZING'}</p>
+              <p className="text-[10px] text-slate-400 font-mono uppercase">RESEMBLE AI</p>
+              <p className="text-xs font-bold text-slate-100">{isResembleConfigured ? 'CONFIGURED' : 'NOT CONFIGURED'}</p>
             </div>
           </div>
           <div className="bg-slate-950/60 p-2.5 rounded-lg border border-slate-800 flex items-center gap-2.5">

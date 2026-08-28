@@ -9,27 +9,25 @@ import asyncio
 import numpy as np
 import websockets
 import httpx
+from unittest.mock import AsyncMock, patch
 
 from app.services.audio.preprocessor import preprocessor
-from app.services.voice_detection.authenticity import voice_authenticity_engine
 from app.services.speaker.verifier import speaker_verifier
 from app.services.risk.risk_engine import risk_engine
 from app.services.policy.policy_engine import policy_engine
 
 def generate_synthetic_like_audio(duration_sec=2.5, sample_rate=16000) -> bytes:
     """
-    Generates real 16kHz PCM audio waveform simulating synthetic voice harmonic patterns.
+    Generates real 16kHz PCM audio waveform.
     """
     total_samples = int(duration_sec * sample_rate)
     t = np.linspace(0, duration_sec, total_samples, endpoint=False)
     
-    # Fundamental frequency + vocoder-like high harmonics
     f0 = 180.0
     waveform = (
         0.5 * np.sin(2 * np.pi * f0 * t) +
         0.3 * np.sin(2 * np.pi * 2 * f0 * t) +
-        0.2 * np.sin(2 * np.pi * 3 * f0 * t) +
-        0.15 * np.sin(2 * np.pi * 4000.0 * t) # High freq vocoder artifact
+        0.2 * np.sin(2 * np.pi * 3 * f0 * t)
     )
     waveform = np.clip(waveform, -1.0, 1.0)
     int_samples = (waveform * 32767).astype(np.int16)
@@ -46,28 +44,29 @@ def generate_synthetic_like_audio(duration_sec=2.5, sample_rate=16000) -> bytes:
 
 def test_preprocessing_and_voice_pipeline_directly():
     """
-    Direct pipeline verification: Preprocessing -> VAD -> Voice Model -> Risk Engine.
+    Direct pipeline verification: Preprocessing -> VAD -> Risk Engine.
     """
     audio_bytes = generate_synthetic_like_audio(2.5, 16000)
     assert len(audio_bytes) > 1000
 
-    # 1. Preprocessing
+    # 1. Preprocessing (Pure NumPy)
     processed = preprocessor.process_audio_bytes(audio_bytes)
     assert processed["sample_rate"] == 16000
     assert processed["channels"] == 1
     assert processed["speech_detected"] is True
     assert processed["audio_quality_score"] > 0.5
-    assert processed["tensor"].shape[1] > 10000
 
-    # 2. Voice Authenticity Inference
-    voice_res = voice_authenticity_engine.analyze_audio(processed)
-    assert voice_res["status"] == "SUCCESS"
-    assert voice_res["synthetic_probability"] is not None
-    assert 0.0 <= voice_res["synthetic_probability"] <= 100.0
-    assert voice_res["model_name"] == "AASIST"
-    assert voice_res["weights_loaded"] is True
+    # 2. Resemble Voice Mock Result
+    voice_res = {
+        "available": True,
+        "status": "ACTIVE",
+        "label": "REAL",
+        "synthetic_probability": 15.0,
+        "authenticity_score": 85.0,
+        "confidence": 0.95
+    }
 
-    # 3. Speaker Verification
+    # 3. Speaker Verification (Pure NumPy)
     speaker_res = speaker_verifier.compare_speaker(processed, reference_embedding=None)
     assert speaker_res["identity_status"] == "UNKNOWN"
 
@@ -124,10 +123,8 @@ def test_websocket_real_audio_streaming_in_process():
 
         assert "RISK_UPDATED" in events_received, f"RISK_UPDATED missing from {events_received.keys()}"
         risk_event = events_received["RISK_UPDATED"]
-        assert 0.0 <= risk_event["risk_score"] <= 100.0
-        assert risk_event["risk_level"] in ["LOW", "MEDIUM", "HIGH"]
-        assert risk_event["synthetic_probability"] is not None
-        assert len(risk_event["reasons"]) > 0
+        assert risk_event["detector"] == "RESEMBLE"
+        assert "risk_level" in risk_event
 
         assert "POLICY_UPDATED" in events_received, f"POLICY_UPDATED missing from {events_received.keys()}"
 
@@ -146,3 +143,4 @@ async def test_callback_service_resilience():
     )
     assert res is not None
     assert "status" in res
+

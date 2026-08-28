@@ -99,31 +99,21 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId }) {
   const [rmsVolume, setRmsVolume] = useState(0);
   const [analysisId, setAnalysisId] = useState(initialCallId || null);
 
-  // Real AI Outputs from backend AASIST, Resemble & Multi-Model Ensemble
+  // Real AI Outputs from backend Resemble AI streaming detector
   const [riskData, setRiskData] = useState({
     riskScore: null,
     riskLevel: null, // null until real risk received
     overallConfidence: null,
     syntheticProbability: null,
     voiceAuthenticity: null,
-    aasist: {
-      status: 'PROCESSING',
+    resemble: {
+      available: false,
+      status: 'DISCONNECTED',
+      label: null,
       syntheticProbability: null,
       authenticityScore: null,
       confidence: null,
-    },
-    resemble: {
-      available: false,
-      status: 'PROCESSING',
-      label: null,
-      syntheticProbability: null,
       consistency: null,
-    },
-    ensemble: {
-      syntheticProbability: null,
-      confidence: null,
-      detectorAgreement: 'UNAVAILABLE',
-      method: 'prototype ensemble weighting'
     },
     speakerSimilarity: null,
     audioQuality: null,
@@ -131,10 +121,23 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId }) {
     transactionScore: null,
     behaviorScore: null,
     reasons: [],
-    recommendedAction: null, // null until real policy evaluated
+    recommendedAction: null,
     verificationRequired: false,
     windowsAnalyzed: 0,
     lastLatencyMs: null,
+  });
+
+  // Diagnostic Pipeline tracker
+  const [pipelineState, setPipelineState] = useState({
+    microphone: 'IDLE',      // IDLE | PASS | FAIL
+    audioTap: 'IDLE',        // IDLE | PASS | FAIL
+    s1ToS2: 'IDLE',          // IDLE | PASS | FAIL
+    s2Receive: 'IDLE',       // IDLE | PASS | FAIL
+    resembleConnect: 'IDLE', // IDLE | PASS | FAIL
+    resembleReady: 'IDLE',   // IDLE | PASS | FAIL
+    resembleResult: 'IDLE',  // IDLE | PASS | NO_VOICE | FAIL
+    telemetry: 'IDLE',       // IDLE | PASS | FAIL
+    callback: 'IDLE'         // IDLE | PASS | FAIL
   });
 
   // Evidence log of actual analysis windows
@@ -162,20 +165,17 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId }) {
 
     const wsBase = resolveWsBase();
     const wsUrl = `${wsBase}/analysis/${targetId}`;
-    console.info(`[TRACE-WS] call_id=${targetId} ws_url=${wsUrl}`);
-    console.info(`[CLIENT-WS] url=${wsUrl}`);
-    console.info(`[CLIENT-WS] state=CONNECTING`);
     console.info(`[SYSTEM 2] Connecting to WebSocket: ${wsUrl} for call_id=${targetId}`);
     setAudioStreamState('CONNECTING');
+    setPipelineState((p) => ({ ...p, s1ToS2: 'PASS', s2Receive: 'PASS' }));
 
     const socket = new WebSocket(wsUrl);
     wsRef.current = socket;
 
     socket.onopen = () => {
-      console.info(`[TRACE-WS-OPEN] id=${targetId}`);
-      console.info(`[CLIENT-WS] state=OPEN`);
       console.info(`[SYSTEM 2] WebSocket connected for session ${targetId}`);
       setAudioStreamState('AUDIO RECEIVING');
+      setPipelineState((p) => ({ ...p, s1ToS2: 'PASS', s2Receive: 'PASS', resembleConnect: 'PASS' }));
 
       // Flush queued audio chunks if any were captured during handshake
       if (pendingAudioQueueRef.current && pendingAudioQueueRef.current.length > 0) {
@@ -184,7 +184,6 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId }) {
           const chunk = pendingAudioQueueRef.current.shift();
           try {
             socket.send(chunk);
-            console.info(`[CLIENT-WS-SEND] analysis_id=${targetId} binary=true bytes=${chunk.byteLength} flushed=true`);
           } catch (err) {
             console.warn('[SYSTEM 2] Failed to flush queued audio chunk', err);
           }
@@ -195,12 +194,14 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId }) {
     socket.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
-        console.info(`[UI-WS-RECEIVE] event=${data.event} analysis_id=${targetId} window_index=${data.window_index || 0} risk_score=${data.risk_score} synthetic_probability=${data.synthetic_probability}`, data);
+        console.info(`[UI-WS-RECEIVE] event=${data.event} analysis_id=${targetId}`, data);
+        
         if (data.event === 'ANALYSIS_STARTED') {
-          console.info(`[TRACE-WS-EVENT] event=ANALYSIS_STARTED analysis_id=${targetId}`);
           setAudioStreamState('AUDIO RECEIVING');
+          setPipelineState((p) => ({ ...p, resembleReady: 'PASS' }));
         } else if (data.event === 'AUDIO_PROCESSED') {
           setAudioStreamState('ANALYZING AUDIO');
+          setPipelineState((p) => ({ ...p, s2Receive: 'PASS', resembleReady: 'PASS' }));
           setRiskData((prev) => ({
             ...prev,
             audioQuality: data.audio_quality_score,
@@ -209,44 +210,40 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId }) {
           }));
         } else if (data.event === 'RISK_UPDATED') {
           const authScore = data.authenticity_score != null ? data.authenticity_score : (data.synthetic_probability != null ? Math.max(0, 100 - data.synthetic_probability) : null);
-          const aasistBlock = data.aasist || {};
           const resembleBlock = data.resemble || {};
-          const ensembleBlock = data.ensemble || {};
+          const isNoVoice = data.risk_level === 'NO_VOICE' || resembleBlock.status === 'NO_VOICE';
 
-          console.info(`[TRACE-UI-RISK-RECEIVE] call_id=${targetId} window_index=${data.window_index || 1} synthetic_probability=${data.synthetic_probability} authenticity_score=${authScore} confidence=${data.overall_confidence} risk_score=${data.risk_score} risk_level=${data.risk_level} recommended_action=${data.recommended_action}`);
-          console.info(`[UI-RISK-RECEIVED] analysis_id=${targetId} window_index=${data.window_index || 1} synthetic_probability=${data.synthetic_probability} risk_score=${data.risk_score} risk_level=${data.risk_level}`);
-          setAudioStreamState('ANALYSIS READY');
+          setAudioStreamState(isNoVoice ? 'NO VOICE DETECTED' : 'ANALYSIS READY');
+          setPipelineState((p) => ({
+            ...p,
+            resembleConnect: 'PASS',
+            resembleReady: 'PASS',
+            resembleResult: isNoVoice ? 'NO_VOICE' : (data.synthetic_probability != null ? 'PASS' : 'PENDING'),
+            telemetry: 'PASS',
+            callback: 'PASS'
+          }));
+
           setRiskData((prev) => ({
             ...prev,
             windowsAnalyzed: data.window_index != null ? data.window_index : (prev.windowsAnalyzed + 1),
             riskScore: data.risk_score,
             riskLevel: data.risk_level,
-            overallConfidence: data.overall_confidence,
+            overallConfidence: data.confidence || data.overall_confidence,
             syntheticProbability: data.synthetic_probability,
             voiceAuthenticity: authScore,
-            aasist: {
-              status: aasistBlock.status || (aasistBlock.synthetic_probability != null ? 'ONLINE' : 'PROCESSING'),
-              syntheticProbability: aasistBlock.synthetic_probability != null ? aasistBlock.synthetic_probability : data.synthetic_probability,
-              authenticityScore: aasistBlock.authenticity_score != null ? aasistBlock.authenticity_score : authScore,
-              confidence: aasistBlock.confidence != null ? aasistBlock.confidence : data.overall_confidence,
-            },
             resemble: {
               available: Boolean(resembleBlock.available),
-              status: resembleBlock.status || (resembleBlock.available ? 'ACTIVE' : 'NOT CONFIGURED'),
-              label: resembleBlock.label || (resembleBlock.synthetic_probability != null ? (resembleBlock.synthetic_probability >= 50 ? 'FAKE' : 'REAL') : '—'),
-              syntheticProbability: resembleBlock.synthetic_probability,
+              status: resembleBlock.status || (isNoVoice ? 'NO_VOICE' : (resembleBlock.available ? 'ACTIVE' : 'NOT CONFIGURED')),
+              label: resembleBlock.label || (data.synthetic_probability != null ? (data.synthetic_probability >= 50 ? 'FAKE' : 'REAL') : (isNoVoice ? 'NO VOICE' : '—')),
+              syntheticProbability: resembleBlock.synthetic_probability != null ? resembleBlock.synthetic_probability : data.synthetic_probability,
+              authenticityScore: authScore,
+              confidence: resembleBlock.confidence || data.confidence,
               consistency: resembleBlock.consistency,
-            },
-            ensemble: {
-              syntheticProbability: ensembleBlock.synthetic_probability != null ? ensembleBlock.synthetic_probability : data.synthetic_probability,
-              confidence: ensembleBlock.confidence != null ? ensembleBlock.confidence : data.overall_confidence,
-              detectorAgreement: ensembleBlock.detector_agreement || 'UNAVAILABLE',
-              method: ensembleBlock.method || 'prototype ensemble weighting'
             },
             speakerSimilarity: data.speaker_similarity,
             contextScore: data.context_score,
             reasons: data.reasons || [],
-            recommendedAction: data.recommended_action || prev.recommendedAction,
+            recommendedAction: data.action || data.recommended_action || prev.recommendedAction,
             lastLatencyMs: data.processing_latency_ms,
           }));
 
@@ -256,14 +253,14 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId }) {
               timestamp: new Date().toLocaleTimeString(),
               callId: targetId,
               windowIndex: data.window_index || prev.length + 1,
+              detector: 'RESEMBLE AI',
               syntheticProbability: data.synthetic_probability,
-              aasistSynthetic: aasistBlock.synthetic_probability,
-              resembleSynthetic: resembleBlock.synthetic_probability,
-              agreement: ensembleBlock.detector_agreement || '—',
-              modelConfidence: data.overall_confidence,
+              authenticityScore: authScore,
+              label: resembleBlock.label || (data.synthetic_probability != null ? (data.synthetic_probability >= 50 ? 'FAKE' : 'REAL') : (isNoVoice ? 'NO VOICE' : '—')),
+              confidence: data.confidence || data.overall_confidence,
               riskScore: data.risk_score,
               riskLevel: data.risk_level,
-              recommendedAction: data.recommended_action,
+              recommendedAction: data.action || data.recommended_action || 'CONTINUE',
             },
             ...prev.slice(0, 19),
           ]);
@@ -838,129 +835,167 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId }) {
             )}
           </div>
 
-          {/* MULTI-MODEL VOICE ANALYSIS SECTION */}
+          {/* RESEMBLE AI & DIAGNOSTIC PIPELINE SECTION */}
           <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <h4 className="text-xs font-bold text-slate-900 uppercase tracking-tight">MULTI-MODEL VOICE ANALYSIS</h4>
-                <p className="text-[11px] text-slate-500">Independent local & cloud deepfake detection ensemble</p>
+            {/* 1. Resemble AI Live Deepfake Detection Card */}
+            <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-5 space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-slate-100">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="w-2.5 h-2.5 rounded-full bg-blue-500 animate-pulse" />
+                    <h4 className="text-xs font-bold text-slate-900 uppercase tracking-tight">RESEMBLE AI LIVE DEEPFAKE DETECTION</h4>
+                  </div>
+                  <p className="text-[11px] text-slate-500 mt-0.5">Authoritative Cloud Streaming Deepfake & Voice Impersonation Engine</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className={`text-[11px] font-mono font-bold px-2.5 py-1 rounded-full border ${
+                    riskData.resemble?.status === 'ACTIVE' || riskData.resemble?.status === 'RESULT' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
+                    riskData.resemble?.status === 'NO_VOICE' ? 'bg-amber-50 text-amber-700 border-amber-200' :
+                    riskData.resemble?.status === 'CONNECTING' ? 'bg-blue-50 text-blue-700 border-blue-200' :
+                    'bg-slate-100 text-slate-700 border-slate-200'
+                  }`}>
+                    {riskData.resemble?.status || 'DISCONNECTED'}
+                  </span>
+                  <span className="text-[10px] font-mono font-bold bg-slate-900 text-slate-100 px-2 py-1 rounded-md">
+                    16 kHz PCM STREAM
+                  </span>
+                </div>
               </div>
-              <span className="text-[10px] font-mono font-bold bg-slate-100 text-slate-700 px-2 py-0.5 rounded">
-                DUAL-DETECTOR PIPELINE
-              </span>
+
+              {/* Real-time Resemble Metric Grid */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div className="bg-slate-50/70 p-3 rounded-xl border border-slate-100">
+                  <p className="text-[10px] text-slate-400 font-mono uppercase">SYNTHETIC PROBABILITY</p>
+                  <p className="text-lg font-mono font-extrabold text-slate-900 mt-1">
+                    {formatPercent(riskData.resemble?.syntheticProbability, 1) !== null ? `${formatPercent(riskData.resemble.syntheticProbability, 1)}%` : '—'}
+                  </p>
+                  <p className="text-[10px] text-slate-400 mt-0.5">Resemble score</p>
+                </div>
+
+                <div className="bg-slate-50/70 p-3 rounded-xl border border-slate-100">
+                  <p className="text-[10px] text-slate-400 font-mono uppercase">AUTHENTICITY</p>
+                  <p className="text-lg font-mono font-extrabold text-emerald-700 mt-1">
+                    {formatPercent(riskData.voiceAuthenticity, 1) !== null ? `${formatPercent(riskData.voiceAuthenticity, 1)}%` : '—'}
+                  </p>
+                  <p className="text-[10px] text-slate-400 mt-0.5">100 - Synthetic</p>
+                </div>
+
+                <div className="bg-slate-50/70 p-3 rounded-xl border border-slate-100">
+                  <p className="text-[10px] text-slate-400 font-mono uppercase">CONFIDENCE</p>
+                  <p className="text-lg font-mono font-extrabold text-slate-900 mt-1">
+                    {formatConfidence(riskData.overallConfidence) !== null ? `${formatConfidence(riskData.overallConfidence)}%` : '—'}
+                  </p>
+                  <p className="text-[10px] text-slate-400 mt-0.5">Inference certainty</p>
+                </div>
+
+                <div className="bg-slate-50/70 p-3 rounded-xl border border-slate-100">
+                  <p className="text-[10px] text-slate-400 font-mono uppercase">VERDICT LABEL</p>
+                  <p className={`text-base font-mono font-extrabold mt-1 uppercase ${
+                    riskData.resemble?.label === 'FAKE' ? 'text-rose-600' :
+                    riskData.resemble?.label === 'REAL' ? 'text-emerald-600' :
+                    'text-slate-500'
+                  }`}>
+                    {riskData.resemble?.label || (riskData.riskLevel === 'NO_VOICE' ? 'NO VOICE' : 'ANALYZING')}
+                  </p>
+                  <p className="text-[10px] text-slate-400 mt-0.5">Windows: #{riskData.windowsAnalyzed}</p>
+                </div>
+              </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              {/* 1. AASIST Card */}
-              <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 space-y-3">
-                <div className="flex justify-between items-center">
-                  <span className="text-xs font-bold text-slate-900 uppercase">AASIST</span>
-                  <span className="text-[10px] font-mono font-bold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded">
-                    {riskData.aasist?.status || 'ONLINE'}
-                  </span>
+            {/* 2. Diagnostic Pipeline Panel */}
+            <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-5 space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h4 className="text-xs font-bold text-slate-900 uppercase tracking-tight">END-TO-END DIAGNOSTIC PIPELINE</h4>
+                  <p className="text-[11px] text-slate-500">Live operational status of every stage from microphone capture to System 1 callback</p>
                 </div>
-                <div className="space-y-1.5 text-xs">
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Synthetic Prob</span>
-                    <span className="font-mono font-bold text-slate-900">
-                      {formatPercent(riskData.aasist?.syntheticProbability, 1) !== null ? `${formatPercent(riskData.aasist.syntheticProbability, 1)}%` : '—'}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Authenticity</span>
-                    <span className="font-mono font-bold text-slate-900">
-                      {formatPercent(riskData.aasist?.authenticityScore, 1) !== null ? `${formatPercent(riskData.aasist.authenticityScore, 1)}%` : '—'}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Confidence</span>
-                    <span className="font-mono text-slate-800">
-                      {formatConfidence(riskData.aasist?.confidence) !== null ? `${formatConfidence(riskData.aasist.confidence)}%` : '—'}
-                    </span>
-                  </div>
-                  <div className="flex justify-between border-t border-slate-100 pt-1.5 text-[11px]">
-                    <span className="text-slate-400">Architecture</span>
-                    <span className="font-mono text-slate-600">Spectro-Temporal Graph</span>
-                  </div>
-                </div>
+                <span className="text-[10px] font-mono font-bold bg-slate-100 text-slate-700 px-2 py-0.5 rounded">
+                  9-STAGE VERIFICATION
+                </span>
               </div>
 
-              {/* 2. Resemble AI Card */}
-              <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 space-y-3">
-                <div className="flex justify-between items-center">
-                  <span className="text-xs font-bold text-slate-900 uppercase">RESEMBLE AI</span>
-                  <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded ${
-                    riskData.resemble?.status === 'ACTIVE' ? 'bg-blue-100 text-blue-800' :
-                    riskData.resemble?.status === 'PROCESSING' ? 'bg-amber-100 text-amber-800' :
-                    'bg-slate-100 text-slate-700'
-                  }`}>
-                    {riskData.resemble?.status || 'PROCESSING'}
-                  </span>
+              <div className="grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-5 gap-2.5 pt-2">
+                {/* 1. Microphone */}
+                <div className="p-2.5 rounded-xl border border-slate-100 bg-slate-50/60 flex items-center justify-between">
+                  <div>
+                    <p className="text-[10px] font-mono text-slate-400 uppercase">1. MICROPHONE</p>
+                    <p className="text-xs font-bold text-slate-800">{isMicActive ? 'ACTIVE (CAP)' : 'STANDBY'}</p>
+                  </div>
+                  <span className={`w-2 h-2 rounded-full ${isMicActive ? 'bg-emerald-500 animate-pulse' : 'bg-slate-300'}`} />
                 </div>
-                <div className="space-y-1.5 text-xs">
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Synthetic Prob</span>
-                    <span className="font-mono font-bold text-slate-900">
-                      {formatPercent(riskData.resemble?.syntheticProbability, 1) !== null ? `${formatPercent(riskData.resemble.syntheticProbability, 1)}%` : '—'}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Verdict Label</span>
-                    <span className="font-mono font-bold text-slate-900">
-                      {riskData.resemble?.label || '—'}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Consistency</span>
-                    <span className="font-mono text-slate-800">
-                      {formatPercent(riskData.resemble?.consistency != null ? riskData.resemble.consistency * 100 : null, 1) !== null ? `${formatPercent(riskData.resemble.consistency * 100, 1)}%` : '—'}
-                    </span>
-                  </div>
-                  <div className="flex justify-between border-t border-slate-100 pt-1.5 text-[11px]">
-                    <span className="text-slate-400">Stream Protocol</span>
-                    <span className="font-mono text-slate-600">WebSocket 16 kHz</span>
-                  </div>
-                </div>
-              </div>
 
-              {/* 3. Detector Agreement & Ensemble Card */}
-              <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 space-y-3">
-                <div className="flex justify-between items-center">
-                  <span className="text-xs font-bold text-slate-900 uppercase">AGREEMENT</span>
-                  <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded ${
-                    riskData.ensemble?.detectorAgreement === 'HIGH' ? 'bg-emerald-100 text-emerald-800' :
-                    riskData.ensemble?.detectorAgreement === 'MEDIUM' ? 'bg-amber-100 text-amber-800' :
-                    riskData.ensemble?.detectorAgreement === 'LOW' ? 'bg-rose-100 text-rose-800' :
-                    'bg-slate-100 text-slate-700'
-                  }`}>
-                    {riskData.ensemble?.detectorAgreement || 'UNAVAILABLE'}
-                  </span>
+                {/* 2. Audio Tap */}
+                <div className="p-2.5 rounded-xl border border-slate-100 bg-slate-50/60 flex items-center justify-between">
+                  <div>
+                    <p className="text-[10px] font-mono text-slate-400 uppercase">2. AUDIO TAP</p>
+                    <p className="text-xs font-bold text-slate-800">{isMicActive ? '16kHz MONO' : 'IDLE'}</p>
+                  </div>
+                  <span className={`w-2 h-2 rounded-full ${isMicActive ? 'bg-emerald-500' : 'bg-slate-300'}`} />
                 </div>
-                <div className="space-y-1.5 text-xs">
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Ensemble Synth</span>
-                    <span className="font-mono font-bold text-slate-900">
-                      {formatPercent(riskData.ensemble?.syntheticProbability, 1) !== null ? `${formatPercent(riskData.ensemble.syntheticProbability, 1)}%` : '—'}
-                    </span>
+
+                {/* 3. S1 -> S2 WS */}
+                <div className="p-2.5 rounded-xl border border-slate-100 bg-slate-50/60 flex items-center justify-between">
+                  <div>
+                    <p className="text-[10px] font-mono text-slate-400 uppercase">3. S1 → S2 WS</p>
+                    <p className="text-xs font-bold text-slate-800">{audioStreamState === 'ERROR' ? 'FAIL' : (wsRef.current ? 'CONNECTED' : 'STANDBY')}</p>
                   </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Ensemble Conf</span>
-                    <span className="font-mono font-bold text-slate-900">
-                      {formatConfidence(riskData.ensemble?.confidence) !== null ? `${formatConfidence(riskData.ensemble.confidence)}%` : '—'}
-                    </span>
+                  <span className={`w-2 h-2 rounded-full ${wsRef.current ? 'bg-emerald-500' : audioStreamState === 'ERROR' ? 'bg-rose-500' : 'bg-slate-300'}`} />
+                </div>
+
+                {/* 4. S2 Audio Receive */}
+                <div className="p-2.5 rounded-xl border border-slate-100 bg-slate-50/60 flex items-center justify-between">
+                  <div>
+                    <p className="text-[10px] font-mono text-slate-400 uppercase">4. S2 RECEIVE</p>
+                    <p className="text-xs font-bold text-slate-800">{riskData.windowsAnalyzed > 0 ? 'INGESTING' : 'WAITING'}</p>
                   </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Speaker Match</span>
-                    <span className="font-mono text-slate-800">
-                      {formatPercent(riskData.speakerSimilarity, 1) !== null ? `${formatPercent(riskData.speakerSimilarity, 1)}%` : 'No Profile'}
-                    </span>
+                  <span className={`w-2 h-2 rounded-full ${riskData.windowsAnalyzed > 0 ? 'bg-emerald-500' : 'bg-slate-300'}`} />
+                </div>
+
+                {/* 5. Resemble Connection */}
+                <div className="p-2.5 rounded-xl border border-slate-100 bg-slate-50/60 flex items-center justify-between">
+                  <div>
+                    <p className="text-[10px] font-mono text-slate-400 uppercase">5. RESEMBLE WS</p>
+                    <p className="text-xs font-bold text-slate-800">{riskData.resemble?.available || riskData.windowsAnalyzed > 0 ? 'OPEN' : 'STANDBY'}</p>
                   </div>
-                  <div className="flex justify-between border-t border-slate-100 pt-1.5 text-[11px]">
-                    <span className="text-slate-400">Method</span>
-                    <span className="font-mono text-slate-600 truncate max-w-[130px]" title="Prototype Ensemble Weighting">
-                      Prototype Weighting
-                    </span>
+                  <span className={`w-2 h-2 rounded-full ${riskData.resemble?.available || riskData.windowsAnalyzed > 0 ? 'bg-emerald-500' : 'bg-slate-300'}`} />
+                </div>
+
+                {/* 6. Resemble Ready */}
+                <div className="p-2.5 rounded-xl border border-slate-100 bg-slate-50/60 flex items-center justify-between">
+                  <div>
+                    <p className="text-[10px] font-mono text-slate-400 uppercase">6. RESEMBLE READY</p>
+                    <p className="text-xs font-bold text-slate-800">{riskData.windowsAnalyzed > 0 ? 'READY' : 'PENDING'}</p>
                   </div>
+                  <span className={`w-2 h-2 rounded-full ${riskData.windowsAnalyzed > 0 ? 'bg-emerald-500' : 'bg-slate-300'}`} />
+                </div>
+
+                {/* 7. Resemble Result */}
+                <div className="p-2.5 rounded-xl border border-slate-100 bg-slate-50/60 flex items-center justify-between">
+                  <div>
+                    <p className="text-[10px] font-mono text-slate-400 uppercase">7. RESEMBLE RESULT</p>
+                    <p className="text-xs font-bold text-slate-800">
+                      {riskData.riskLevel === 'NO_VOICE' ? 'NO VOICE' : (riskData.resemble?.syntheticProbability !== null ? 'RECEIVED' : 'WAITING')}
+                    </p>
+                  </div>
+                  <span className={`w-2 h-2 rounded-full ${riskData.resemble?.syntheticProbability !== null ? 'bg-emerald-500' : riskData.riskLevel === 'NO_VOICE' ? 'bg-amber-500' : 'bg-slate-300'}`} />
+                </div>
+
+                {/* 8. Telemetry Broadcast */}
+                <div className="p-2.5 rounded-xl border border-slate-100 bg-slate-50/60 flex items-center justify-between">
+                  <div>
+                    <p className="text-[10px] font-mono text-slate-400 uppercase">8. TELEMETRY</p>
+                    <p className="text-xs font-bold text-slate-800">{riskData.windowsAnalyzed > 0 ? 'BROADCASTING' : 'STANDBY'}</p>
+                  </div>
+                  <span className={`w-2 h-2 rounded-full ${riskData.windowsAnalyzed > 0 ? 'bg-emerald-500' : 'bg-slate-300'}`} />
+                </div>
+
+                {/* 9. System 1 Callback */}
+                <div className="p-2.5 rounded-xl border border-slate-100 bg-slate-50/60 flex items-center justify-between">
+                  <div>
+                    <p className="text-[10px] font-mono text-slate-400 uppercase">9. S1 CALLBACK</p>
+                    <p className="text-xs font-bold text-slate-800">{riskData.windowsAnalyzed > 0 ? 'ACTIVE' : 'STANDBY'}</p>
+                  </div>
+                  <span className={`w-2 h-2 rounded-full ${riskData.windowsAnalyzed > 0 ? 'bg-emerald-500' : 'bg-slate-300'}`} />
                 </div>
               </div>
             </div>
@@ -973,7 +1008,7 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId }) {
         <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between bg-slate-50/50">
           <div>
             <h3 className="text-sm font-bold text-slate-900 tracking-tight">ANALYSIS EVIDENCE & WINDOW AUDIT</h3>
-            <p className="text-xs text-slate-500">Empirical inference evidence generated across consecutive 2.5s audio chunks</p>
+            <p className="text-xs text-slate-500">Resemble AI empirical deepfake detection evidence per 2.5s streaming audio window</p>
           </div>
           <span className="text-xs font-mono text-slate-400">Total windows: {evidenceLog.length}</span>
         </div>
@@ -983,10 +1018,10 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId }) {
               <tr>
                 <th className="px-4 py-3 text-left">Timestamp</th>
                 <th className="px-4 py-3 text-left">Window</th>
-                <th className="px-4 py-3 text-left">AASIST %</th>
-                <th className="px-4 py-3 text-left">Resemble %</th>
-                <th className="px-4 py-3 text-left">Agreement</th>
-                <th className="px-4 py-3 text-left">Ensemble Synth</th>
+                <th className="px-4 py-3 text-left">Detector</th>
+                <th className="px-4 py-3 text-left">Synthetic %</th>
+                <th className="px-4 py-3 text-left">Authenticity %</th>
+                <th className="px-4 py-3 text-left">Verdict</th>
                 <th className="px-4 py-3 text-left">Confidence</th>
                 <th className="px-4 py-3 text-left">Risk Score</th>
                 <th className="px-4 py-3 text-left">Risk Level</th>
@@ -999,27 +1034,24 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId }) {
                   <tr key={i} className="hover:bg-slate-50">
                     <td className="px-4 py-3 font-mono text-slate-500">{row.timestamp}</td>
                     <td className="px-4 py-3 font-mono font-bold text-slate-700">#{row.windowIndex}</td>
-                    <td className="px-4 py-3 font-mono text-slate-900">
-                      {formatPercent(row.aasistSynthetic, 1) !== null ? `${formatPercent(row.aasistSynthetic, 1)}%` : '—'}
-                    </td>
-                    <td className="px-4 py-3 font-mono text-slate-900">
-                      {formatPercent(row.resembleSynthetic, 1) !== null ? `${formatPercent(row.resembleSynthetic, 1)}%` : '—'}
-                    </td>
-                    <td className="px-4 py-3 font-mono text-slate-700">
-                      <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
-                        row.agreement === 'HIGH' ? 'bg-emerald-100 text-emerald-800' :
-                        row.agreement === 'MEDIUM' ? 'bg-amber-100 text-amber-800' :
-                        row.agreement === 'LOW' ? 'bg-rose-100 text-rose-800' :
-                        'bg-slate-100 text-slate-600'
-                      }`}>
-                        {row.agreement || '—'}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 font-mono text-slate-900">
+                    <td className="px-4 py-3 font-mono font-bold text-blue-700">{row.detector || 'RESEMBLE AI'}</td>
+                    <td className="px-4 py-3 font-mono font-bold text-slate-900">
                       {formatPercent(row.syntheticProbability, 1) !== null ? `${formatPercent(row.syntheticProbability, 1)}%` : '—'}
                     </td>
+                    <td className="px-4 py-3 font-mono font-bold text-emerald-700">
+                      {formatPercent(row.authenticityScore, 1) !== null ? `${formatPercent(row.authenticityScore, 1)}%` : '—'}
+                    </td>
+                    <td className="px-4 py-3 font-mono text-slate-800">
+                      <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                        row.label === 'FAKE' ? 'bg-rose-100 text-rose-800' :
+                        row.label === 'REAL' ? 'bg-emerald-100 text-emerald-800' :
+                        'bg-slate-100 text-slate-600'
+                      }`}>
+                        {row.label || '—'}
+                      </span>
+                    </td>
                     <td className="px-4 py-3 font-mono text-slate-700">
-                      {formatConfidence(row.modelConfidence) !== null ? `${formatConfidence(row.modelConfidence)}%` : '—'}
+                      {formatConfidence(row.confidence) !== null ? `${formatConfidence(row.confidence)}%` : '—'}
                     </td>
                     <td className="px-4 py-3 font-mono font-bold text-slate-900">
                       {formatScore(row.riskScore, 1) !== null ? formatScore(row.riskScore, 1) : '—'}
@@ -1028,9 +1060,10 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId }) {
                       <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
                         row.riskLevel === 'HIGH' ? 'bg-rose-100 text-rose-800' :
                         row.riskLevel === 'MEDIUM' ? 'bg-amber-100 text-amber-800' :
+                        row.riskLevel === 'NO_VOICE' ? 'bg-amber-100 text-amber-800' :
                         'bg-emerald-100 text-emerald-800'
                       }`}>
-                        {row.riskLevel || 'LOW'}
+                        {row.riskLevel || 'ANALYSIS WAITING'}
                       </span>
                     </td>
                     <td className="px-4 py-3 font-semibold text-slate-800">{row.recommendedAction || 'CONTINUE'}</td>

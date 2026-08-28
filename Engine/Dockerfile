@@ -1,4 +1,4 @@
-# Dockerfile for Nirbhaya Sanchar AI Voice Security Engine (System 2)
+# Dockerfile for Nirbhaya Sanchar AI Voice Security Engine (System 2 - Resemble Streaming)
 FROM python:3.11-slim
 
 WORKDIR /app
@@ -10,16 +10,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
-# Install CPU-only PyTorch and TorchAudio to keep Docker image lightweight and prevent Render 512MB OOM crash
-RUN pip install --no-cache-dir torch torchaudio --index-url https://download.pytorch.org/whl/cpu
-
-# Install remaining Python requirements
+# Install lightweight Python requirements (no PyTorch/CUDA)
 COPY backend/requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt
 
-# Copy backend application source and model checkpoints
+# Copy backend application source
 COPY backend/app /app/app
-COPY backend/models /app/models
 
 EXPOSE 8000
 
@@ -27,3 +23,4 @@ ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
 
 CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+

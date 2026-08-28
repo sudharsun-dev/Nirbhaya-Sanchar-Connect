@@ -23,15 +23,8 @@ async def lifespan(app: FastAPI):
     except Exception as db_err:
         print(f"[DATABASE] status=OFFLINE error={db_err}")
 
-    # 2. AASIST Model Check (Defensive)
-    print("[AASIST] CHECKING MODEL")
-    model_exists = os.path.exists(settings.VOICE_MODEL_PATH) if settings.VOICE_MODEL_PATH else False
-    print(f"[AASIST] path={settings.VOICE_MODEL_PATH} exists={model_exists}")
-    try:
-        from app.services.voice_detection.authenticity import voice_authenticity_engine
-        print(f"[AASIST] weights_loaded={voice_authenticity_engine.weights_loaded} status={'ONLINE' if voice_authenticity_engine.weights_loaded else 'OFFLINE'}")
-    except Exception as m_err:
-        print(f"[AASIST] status=OFFLINE error={m_err}")
+    # 2. Resemble AI Voice Deepfake Detection Service Diagnostic (Authoritative Engine)
+    print(f"[RESEMBLE-CONFIG] configured={'true' if settings.is_resemble_configured else 'false'}")
 
     # 3. Speaker Verification (Defensive)
     try:
@@ -40,10 +33,7 @@ async def lifespan(app: FastAPI):
     except Exception as spk_err:
         print(f"[SPEAKER] status=OFFLINE error={spk_err}")
 
-    # 4. Resemble AI Service Diagnostic (Defensive)
-    print(f"[RESEMBLE-CONFIG] configured={'true' if settings.is_resemble_configured else 'false'}")
-
-    # 5. System 1 Callback (Defensive)
+    # 4. System 1 Callback (Defensive)
     try:
         from app.services.system1.callback_service import callback_service
         print(f"[CALLBACK] target={callback_service.callback_url} status=CONFIGURED")

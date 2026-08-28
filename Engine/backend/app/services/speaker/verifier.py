@@ -1,56 +1,66 @@
 import time
-import math
 import numpy as np
-import torch
-import torchaudio
-import torchaudio.transforms as T
+from scipy import signal
 from app.config import settings
 
 class SpeakerVerificationEngine:
     """
     Speaker Identity & Verification Engine.
     Extracts acoustic speaker embeddings from audio windows and computes cosine similarity
-    against registered reference voice embeddings.
+    against registered reference voice embeddings using pure NumPy and SciPy.
     """
     def __init__(self):
         self.model_name = settings.SPEAKER_MODEL
         self.sample_rate = 16000
-        self.mfcc_transform = T.MFCC(
-            sample_rate=16000,
-            n_mfcc=40,
-            melkwargs={"n_fft": 512, "hop_length": 160, "n_mels": 60}
-        )
 
     def extract_embedding(self, processed_audio: dict) -> np.ndarray:
         """
-        Extracts a protected 80-dimensional acoustic speaker feature embedding vector.
+        Extracts an 80-dimensional acoustic speaker feature embedding vector using pure NumPy/SciPy.
         """
-        tensor = processed_audio.get("tensor")
-        if tensor is None or tensor.shape[1] < 1600:
+        audio = processed_audio.get("audio_data")
+        if audio is None:
+            tensor = processed_audio.get("tensor")
+            if tensor is not None:
+                audio = np.asarray(tensor).flatten()
+        if audio is None or len(audio) < 1600:
             return None
 
-        with torch.no_grad():
-            mfcc = self.mfcc_transform(tensor) # (1, 40, frames)
-            delta = torchaudio.functional.compute_deltas(mfcc)
+        try:
+            # Compute STFT spectrogram
+            f, t, zxx = signal.stft(audio, fs=self.sample_rate, nperseg=512, noverlap=352)
+            spec_mag = np.abs(zxx)  # (freq_bins, time_frames)
             
-            # Mean and Std pooling across frame dimension (Acoustic Spectral Vector)
-            mean_pool = torch.mean(mfcc, dim=2).squeeze(0)
-            std_pool = torch.std(mfcc, dim=2).squeeze(0)
-            embedding_tensor = torch.cat([mean_pool, std_pool], dim=0) # (80,)
+            # Log magnitude
+            log_spec = np.log(np.maximum(spec_mag, 1e-6))
+            
+            # Pool into 40 frequency bands
+            n_bands = 40
+            band_size = max(1, log_spec.shape[0] // n_bands)
+            bands = []
+            for i in range(n_bands):
+                start = i * band_size
+                end = (i + 1) * band_size if i < n_bands - 1 else log_spec.shape[0]
+                bands.append(np.mean(log_spec[start:end, :], axis=0))
+            band_matrix = np.array(bands)  # (40, time_frames)
+            
+            # Mean and Std pooling across time dimension -> 80 dimensions
+            mean_pool = np.mean(band_matrix, axis=1)  # (40,)
+            std_pool = np.std(band_matrix, axis=1)    # (40,)
+            embedding = np.concatenate([mean_pool, std_pool], axis=0).astype(np.float32)  # (80,)
 
             # L2 normalize embedding
-            norm = torch.norm(embedding_tensor)
+            norm = np.linalg.norm(embedding)
             if norm > 0:
-                embedding_tensor = embedding_tensor / norm
+                embedding = embedding / norm
             
-            return embedding_tensor.cpu().numpy()
+            return embedding
+        except Exception:
+            return None
 
     def compare_speaker(self, processed_audio: dict, reference_embedding: list = None) -> dict:
         """
         Compares current call audio embedding against target user's reference embedding.
         """
-        start_time = time.time()
-
         if reference_embedding is None:
             return {
                 "identity_status": "UNKNOWN",
@@ -74,14 +84,14 @@ class SpeakerVerificationEngine:
             ref_emb = np.array(reference_embedding, dtype=np.float32)
             
             # Cosine similarity
-            dot_product = np.dot(current_emb, ref_emb)
-            norm_a = np.linalg.norm(current_emb)
-            norm_b = np.linalg.norm(ref_emb)
+            dot_product = float(np.dot(current_emb, ref_emb))
+            norm_a = float(np.linalg.norm(current_emb))
+            norm_b = float(np.linalg.norm(ref_emb))
 
             if norm_a == 0 or norm_b == 0:
                 similarity = 0.0
             else:
-                similarity = float(dot_product / (norm_a * norm_b))
+                similarity = dot_product / (norm_a * norm_b)
 
             similarity_pct = round(max(0.0, min(100.0, (similarity + 1.0) / 2.0 * 100.0)), 2)
 
@@ -114,3 +124,4 @@ class SpeakerVerificationEngine:
             }
 
 speaker_verifier = SpeakerVerificationEngine()
+

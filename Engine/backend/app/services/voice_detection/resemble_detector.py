@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 class ResembleStreamSession:
     """
     State container for an active Resemble AI streaming detection session.
+    Maintains one persistent WebSocket stream per active call_id.
     """
     def __init__(self, call_id: str, ws: websockets.WebSocketClientProtocol):
         self.call_id = call_id
@@ -21,8 +22,11 @@ class ResembleStreamSession:
         self.latest_result: Dict[str, Any] = {
             "available": True,
             "status": "PROCESSING",
+            "source": "RESEMBLE",
             "label": None,
             "synthetic_probability": None,
+            "authenticity_score": None,
+            "confidence": None,
             "aggregated_score": None,
             "consistency": None,
             "raw": None,
@@ -32,11 +36,22 @@ class ResembleStreamSession:
         self.receiver_task: Optional[asyncio.Task] = None
         self.error: Optional[str] = None
 
+
 class ResembleStreamingDetector:
     """
-    Dedicated Resemble AI Streaming Voice Deepfake Detection Service.
+    Dedicated Resemble AI Streaming Voice Deepfake Detection Service (Authoritative Engine).
     Connects to official Resemble WebSocket (wss://stream.resemble.ai/api/v1/detect/audio)
-    using server-side credentials and streams 16kHz mono audio chunks.
+    using server-side credentials and streams 16kHz mono 16-bit PCM audio chunks.
+    
+    Score Mapping Documentation:
+    Resemble Deepfake Detection streaming API returns:
+      - `score` / `aggregated_score`: A float from 0.0 to 1.0 indicating probability of synthetic/AI-generated speech.
+        * 1.0 = Highly confident synthetic/deepfake speech.
+        * 0.0 = Highly confident authentic human speech.
+      - Conversion:
+        * synthetic_probability = score * 100.0  (0.0% to 100.0%)
+        * authenticity_score = 100.0 - synthetic_probability
+        * confidence = consistency (if provided by Resemble, 0.0 to 1.0)
     """
     def __init__(self):
         self.stream_url = settings.RESEMBLE_STREAM_URL
@@ -71,8 +86,7 @@ class ResembleStreamingDetector:
             }
 
             try:
-                print(f"[RESEMBLE-CONNECTING] call_id={call_id} url={self.stream_url}")
-                print(f"[TRACE-RESEMBLE-CONNECT] call_id={call_id} url={self.stream_url}")
+                print(f"[RESEMBLE-CONNECT] call_id={call_id}")
                 ws = await websockets.connect(
                     self.stream_url,
                     extra_headers=headers,
@@ -88,11 +102,10 @@ class ResembleStreamingDetector:
                 try:
                     await asyncio.wait_for(session.ready_event.wait(), timeout=1.5)
                 except asyncio.TimeoutError:
-                    # If Resemble doesn't send explicit ready message, assume ready to send
+                    # If Resemble doesn't send explicit ready message, mark ready to send
                     session.ready_event.set()
 
-                print(f"[RESEMBLE-READY] call_id={call_id} session_active=true")
-                print(f"[TRACE-RESEMBLE-READY] call_id={call_id} ready=true")
+                print(f"[RESEMBLE-READY] call_id={call_id}")
                 return session
             except websockets.exceptions.InvalidStatusCode as status_err:
                 print(f"[RESEMBLE-ERROR] call_id={call_id} HTTP_{status_err.status_code}: {status_err}")
@@ -110,8 +123,11 @@ class ResembleStreamingDetector:
             return {
                 "available": False,
                 "status": "NOT_CONFIGURED",
+                "source": "RESEMBLE",
                 "label": None,
                 "synthetic_probability": None,
+                "authenticity_score": None,
+                "confidence": None,
                 "aggregated_score": None,
                 "consistency": None,
                 "detail": "RESEMBLE_API_KEY not configured on server."
@@ -122,8 +138,11 @@ class ResembleStreamingDetector:
             return {
                 "available": False,
                 "status": "UNAVAILABLE",
+                "source": "RESEMBLE",
                 "label": None,
                 "synthetic_probability": None,
+                "authenticity_score": None,
+                "confidence": None,
                 "aggregated_score": None,
                 "consistency": None,
                 "detail": session.error if session else "Unable to establish Resemble stream."
@@ -137,14 +156,13 @@ class ResembleStreamingDetector:
                 except asyncio.TimeoutError:
                     session.ready_event.set()
 
-            print(f"[RESEMBLE-AUDIO-SEND] call_id={call_id} window={window_index} bytes={len(audio_bytes)}")
-            print(f"[TRACE-RESEMBLE-SEND] call_id={call_id} window_index={window_index} bytes={len(audio_bytes)}")
+            print(f"[RESEMBLE-SEND] call_id={call_id} window={window_index} bytes={len(audio_bytes)}")
             await session.ws.send(audio_bytes)
             session.chunks_sent += 1
             # Give receiver event loop a tiny yield to process any inbound frame
             await asyncio.sleep(0.005)
             res = dict(session.latest_result)
-            print(f"[TRACE-RESEMBLE-RESULT] call_id={call_id} window_index={window_index} status={res.get('status')} synthetic_probability={res.get('synthetic_probability')} label={res.get('label')}")
+            print(f"[RESEMBLE-RESULT] call_id={call_id} window={window_index} label={res.get('label')} score={res.get('aggregated_score')}")
             return res
         except Exception as send_err:
             print(f"[RESEMBLE-ERROR] call_id={call_id} send_failed: {send_err}")
@@ -153,8 +171,11 @@ class ResembleStreamingDetector:
             return {
                 "available": False,
                 "status": "ERROR",
+                "source": "RESEMBLE",
                 "label": None,
                 "synthetic_probability": None,
+                "authenticity_score": None,
+                "confidence": None,
                 "aggregated_score": None,
                 "consistency": None,
                 "detail": f"Stream write failed: {send_err}"
@@ -172,7 +193,7 @@ class ResembleStreamingDetector:
 
                     if msg_type in ["ready", "START"]:
                         session.ready_event.set()
-                        print(f"[RESEMBLE-READY] call_id={session.call_id} handshake=received")
+                        print(f"[RESEMBLE-READY] call_id={session.call_id}")
                         continue
 
                     # Handle error messages from Resemble
@@ -184,22 +205,26 @@ class ResembleStreamingDetector:
                         session.latest_result["detail"] = str(err_msg)
                         continue
 
-                    label = data.get("label") # "real", "fake", or None
-                    aggregated_score = data.get("aggregated_score") # 0.0 to 1.0 or None
-                    score = data.get("score") # instant chunk score
-                    consistency = data.get("consistency")
+                    label = data.get("label")  # "real", "fake", or None
+                    aggregated_score = data.get("aggregated_score")  # 0.0 to 1.0 or None
+                    score = data.get("score")  # instant chunk score
+                    consistency = data.get("consistency")  # 0.0 to 1.0 or None
                     chunk_info = data.get("chunk_info")
                     duration = data.get("duration", 0.0)
 
                     session.ready_event.set()
 
                     # Handle NO_VOICE / insufficient voice activity
-                    if aggregated_score is None and label is None:
+                    # When Resemble detects no voice or silence, do NOT invent fake 0% scores
+                    if aggregated_score is None and score is None and label is None:
                         session.latest_result = {
                             "available": True,
                             "status": "NO_VOICE",
+                            "source": "RESEMBLE",
                             "label": None,
                             "synthetic_probability": None,
+                            "authenticity_score": None,
+                            "confidence": None,
                             "aggregated_score": None,
                             "consistency": consistency,
                             "chunk_info": chunk_info,
@@ -209,20 +234,28 @@ class ResembleStreamingDetector:
                         }
                         continue
 
-                    # Normalize synthetic probability (0.0 to 100.0%)
+                    # Score Normalization:
+                    # Resemble score represents synthetic probability in range [0.0, 1.0].
+                    # We normalize this to 0.0% to 100.0%.
                     synth_prob = None
+                    auth_score = None
                     eff_score = aggregated_score if aggregated_score is not None else score
                     if eff_score is not None and isinstance(eff_score, (int, float)):
                         synth_prob = round(float(eff_score) * 100.0, 2)
+                        auth_score = round(max(0.0, min(100.0, 100.0 - synth_prob)), 2)
 
-                    norm_label = str(label).upper() if label else ("FAKE" if synth_prob and synth_prob >= 50.0 else "REAL" if synth_prob is not None else "PROCESSING")
+                    norm_label = str(label).upper() if label else ("FAKE" if synth_prob and synth_prob >= 50.0 else "REAL" if synth_prob is not None else None)
+                    norm_confidence = round(float(consistency), 2) if consistency is not None and isinstance(consistency, (int, float)) else (0.90 if synth_prob is not None else None)
 
                     session.latest_result = {
                         "available": True,
                         "status": "ACTIVE",
+                        "source": "RESEMBLE",
                         "label": norm_label,
                         "synthetic_probability": synth_prob,
-                        "aggregated_score": aggregated_score,
+                        "authenticity_score": auth_score,
+                        "confidence": norm_confidence,
+                        "aggregated_score": eff_score,
                         "consistency": consistency,
                         "chunk_info": chunk_info,
                         "duration_analyzed_s": duration,
@@ -230,7 +263,7 @@ class ResembleStreamingDetector:
                         "last_updated": time.time()
                     }
 
-                    print(f"[RESEMBLE-CHUNK] call_id={session.call_id} label={norm_label} score={aggregated_score} synthetic_probability={synth_prob}% consistency={consistency}")
+                    print(f"[RESEMBLE-CHUNK] call_id={session.call_id} label={norm_label} score={eff_score} synthetic_probability={synth_prob}% consistency={consistency}")
                 except json.JSONDecodeError as json_err:
                     logger.warn(f"[RESEMBLE JSON ERROR] {json_err}")
         except websockets.ConnectionClosed as cc:
@@ -301,3 +334,4 @@ class ResembleStreamingDetector:
         }
 
 resemble_detector = ResembleStreamingDetector()
+

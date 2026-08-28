@@ -74,16 +74,7 @@ class Settings(BaseSettings):
             return "https://nirbhaya-connect-server.onrender.com/api/nirbhaya/callback"
         return url
 
-    # AI Models Metadata & Settings
-    VOICE_MODEL_PROVIDER: str = "AASIST"
-    VOICE_MODEL_NAME: str = "AASIST"
-    VOICE_MODEL_VERSION: str = "ASVspoof2019-LA"
-    VOICE_MODEL_PATH: Optional[str] = "models/AASIST.pth"
-    VOICE_MODEL_LICENSE: str = "MIT / NAVER Corp (Clova AI)"
-    VOICE_DETECTION_API_KEY: Optional[str] = None
-    VOICE_DETECTION_API_URL: Optional[str] = None
-
-    # Resemble AI Streaming Deepfake Detection
+    # Resemble AI Streaming Deepfake Detection (Authoritative Voice AI Engine)
     RESEMBLE_API_KEY: Optional[str] = os.getenv("RESEMBLE_API_KEY")
     RESEMBLE_STREAM_URL: str = os.getenv("RESEMBLE_STREAM_URL", "wss://stream.resemble.ai/api/v1/detect/audio")
 

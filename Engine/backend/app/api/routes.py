@@ -1,9 +1,8 @@
 import uuid
 import httpx
-import torch
 from datetime import datetime
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, status
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, status, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
@@ -22,7 +21,6 @@ from app.schemas.schemas import (
 )
 
 from app.services.audio.preprocessor import preprocessor
-from app.services.voice_detection.authenticity import voice_authenticity_engine
 from app.services.voice_detection.resemble_detector import resemble_detector
 from app.services.speaker.verifier import speaker_verifier
 from app.services.asr.asr_engine import asr_engine
@@ -41,7 +39,7 @@ router = APIRouter()
 @router.get("/health", response_model=SystemHealthResponse)
 async def get_system_health():
     """
-    Returns real, empirically tested system health status across all backend services and AI engines.
+    Returns real system health status across backend database, Resemble AI, and connected subsystems.
     """
     # Check Database connection
     db_status = "ONLINE"
@@ -49,10 +47,10 @@ async def get_system_health():
         async with AsyncSessionLocal() as session:
             await session.execute(select(Call).limit(1))
     except Exception as e:
-        db_status = f"OFFLINE ({str(e)})"
+        db_status = "OFFLINE"
 
-    # Check Voice AI Anti-Spoofing engine
-    voice_status = "ONLINE" if voice_authenticity_engine.is_loaded else "CONFIGURATION_REQUIRED"
+    # Check Resemble AI detector status
+    resemble_status = "CONFIGURED" if resemble_detector.is_configured else "NOT_CONFIGURED"
 
     # Check Speaker Verifier
     speaker_status = "ONLINE"
@@ -72,40 +70,17 @@ async def get_system_health():
     except Exception:
         sys1_status = "OFFLINE"
 
-    overall_status = "ONLINE" if (db_status == "ONLINE" and voice_status == "ONLINE") else "DEGRADED"
+    overall_status = "ONLINE" if db_status == "ONLINE" else "DEGRADED"
 
     return SystemHealthResponse(
         app=settings.APP_NAME,
         environment=settings.ENVIRONMENT,
         status=overall_status,
         services={
-            "database": ServiceHealthStatus(status="ONLINE" if "ONLINE" in db_status else "OFFLINE", message=db_status),
-            "voice_ai": ServiceHealthStatus(
-                status="ONLINE" if voice_authenticity_engine.weights_loaded else "OFFLINE",
-                details={
-                    "model_name": voice_authenticity_engine.model_name,
-                    "provider": voice_authenticity_engine.model_provider,
-                    "version": voice_authenticity_engine.model_version,
-                    "license": voice_authenticity_engine.model_license,
-                    "weights_loaded": voice_authenticity_engine.weights_loaded,
-                    "weights_sha256": voice_authenticity_engine.weights_sha256,
-                    "total_parameters": voice_authenticity_engine.total_parameters,
-                    "torch_version": torch.__version__,
-                    "device": "cpu",
-                    "aasist": {
-                        "status": "ONLINE" if voice_authenticity_engine.weights_loaded else "OFFLINE",
-                        "model": "AASIST",
-                        "version": "ASVspoof2019-LA"
-                    },
-                    "resemble": {
-                        "status": "CONFIGURED" if resemble_detector.is_configured else "NOT_CONFIGURED",
-                        "provider": "Resemble AI"
-                    }
-                }
-            ),
+            "database": ServiceHealthStatus(status=db_status, message=f"Database is {db_status}"),
             "resemble": ServiceHealthStatus(
-                status="CONFIGURED" if resemble_detector.is_configured else "NOT_CONFIGURED",
-                message="Resemble AI streaming detector configured" if resemble_detector.is_configured else "RESEMBLE_API_KEY not configured",
+                status=resemble_status,
+                message="Resemble AI streaming detector ready" if resemble_detector.is_configured else "RESEMBLE_API_KEY not configured",
                 details={
                     "provider": "Resemble AI",
                     "model": "Resemble Streaming Detect",
@@ -128,6 +103,7 @@ async def cors_test(request: Request):
         "origin": origin,
         "environment": settings.ENVIRONMENT
     }
+
 
 @router.get("/system1/health")
 async def get_system1_health():

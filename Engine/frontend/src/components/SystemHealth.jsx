@@ -72,32 +72,40 @@ export default function SystemHealth({ healthStatus }) {
           </div>
         </div>
 
-        {/* AASIST Voice AI Model */}
+        {/* Resemble AI Voice Deepfake Detector */}
         <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm space-y-3">
           <div className="flex justify-between items-center">
             <div className="flex items-center space-x-2">
               <Cpu className="w-5 h-5 text-cyan-600" />
-              <h3 className="text-xs font-bold text-slate-900 uppercase">AASIST Voice Model</h3>
+              <h3 className="text-xs font-bold text-slate-900 uppercase">Resemble AI Detector</h3>
             </div>
-            {getStatusBadge(services.voice_ai?.status || 'ONLINE')}
+            {services.resemble?.status === 'CONFIGURED' ? (
+              <span className="inline-flex items-center gap-1 bg-emerald-100 text-emerald-800 font-bold text-[11px] px-2.5 py-0.5 rounded-full border border-emerald-200">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" /> CONFIGURED
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1 bg-amber-100 text-amber-800 font-bold text-[11px] px-2.5 py-0.5 rounded-full border border-amber-200">
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-500" /> NOT CONFIGURED
+              </span>
+            )}
           </div>
-          <p className="text-xs text-slate-500">Spectral Graph Attention Voice Anti-Spoofing</p>
+          <p className="text-xs text-slate-500">Authoritative Streaming Deepfake & Voice Impersonation Model</p>
           <div className="pt-2 border-t border-slate-100 text-[11px] text-slate-600 space-y-1 font-mono">
             <div className="flex justify-between">
-              <span>Model:</span>
-              <span className="font-semibold text-slate-800">AASIST</span>
+              <span>Provider:</span>
+              <span className="font-semibold text-slate-800">Resemble AI</span>
             </div>
             <div className="flex justify-between">
-              <span>Version:</span>
-              <span className="font-semibold text-slate-800">{voiceAiDetails.version || 'ASVspoof2019-LA'}</span>
+              <span>Engine:</span>
+              <span className="font-semibold text-slate-800">Streaming WebSocket</span>
             </div>
             <div className="flex justify-between">
-              <span>Parameters:</span>
-              <span className="font-semibold text-slate-800">{voiceAiDetails.total_parameters ? voiceAiDetails.total_parameters.toLocaleString() : '297,866'}</span>
+              <span>Audio Format:</span>
+              <span className="font-semibold text-slate-800">16 kHz Mono PCM</span>
             </div>
             <div className="flex justify-between">
-              <span>Weights:</span>
-              <span className="font-semibold text-emerald-700">{voiceAiDetails.weights_loaded !== false ? 'LOADED' : 'UNLOADED'}</span>
+              <span>Status:</span>
+              <span className="font-semibold text-emerald-700">{services.resemble?.status || 'CONFIGURED'}</span>
             </div>
           </div>
         </div>
