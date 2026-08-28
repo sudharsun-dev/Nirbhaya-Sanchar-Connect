@@ -107,3 +107,28 @@ export async function fetchAuditLogs() {
     return [];
   }
 }
+
+export async function fetchQAState() {
+  try {
+    const res = await fetch(`${API_BASE}/qa/state`);
+    if (res.ok) return await res.json();
+  } catch (err) {
+    console.warn('[QA API] Fetch state failed:', err.message);
+  }
+  return { enabled: false, scenario: 'HIGH' };
+}
+
+export async function updateQAState(enabled, scenario = 'HIGH') {
+  try {
+    const res = await fetch(`${API_BASE}/qa/state`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled: Boolean(enabled), scenario }),
+    });
+    if (res.ok) return await res.json();
+  } catch (err) {
+    console.error('[QA API] Update state failed:', err.message);
+  }
+  return null;
+}
+

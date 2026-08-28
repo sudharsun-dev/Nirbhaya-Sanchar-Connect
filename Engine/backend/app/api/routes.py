@@ -400,3 +400,49 @@ async def get_audit_logs(limit: int = 50, db: AsyncSession = Depends(get_db)):
     res = await db.execute(select(AuditLog).order_by(AuditLog.timestamp.desc()).limit(limit))
     logs = res.scalars().all()
     return logs
+
+# ==========================================
+# GLOBAL QA TEST CONTROL ENDPOINTS
+# ==========================================
+
+from pydantic import BaseModel
+from typing import Literal
+from app.services.qa import qa_service
+from app.api.websocket import manager
+
+class QAModeUpdateRequest(BaseModel):
+    enabled: bool
+    scenario: Optional[Literal["LOW", "MEDIUM", "HIGH"]] = "HIGH"
+
+@router.get("/qa/state")
+async def get_qa_state():
+    """
+    Retrieves the global QA test state.
+    Synchronized across all connected browsers and laptops.
+    """
+    return qa_service.get_state()
+
+@router.post("/qa/state")
+async def set_qa_state(payload: QAModeUpdateRequest):
+    """
+    Updates the global QA test state and broadcasts QA_MODE_UPDATED
+    to all connected WebSockets on all active sessions.
+    """
+    updated_state = qa_service.set_state(payload.enabled, payload.scenario or "HIGH")
+    sim_data = qa_service.get_simulated_payload() if payload.enabled else None
+
+    # Broadcast to all connected clients
+    await manager.broadcast_all({
+        "event": "QA_MODE_UPDATED",
+        "enabled": updated_state["enabled"],
+        "scenario": updated_state["scenario"],
+        "updated_at": updated_state["updated_at"],
+        "simulated_data": sim_data
+    })
+
+    print(f"[QA-BROADCAST] QA_MODE_UPDATED enabled={updated_state['enabled']} scenario={updated_state['scenario']}")
+    return {
+        "status": "SUCCESS",
+        "qa_state": updated_state
+    }
+

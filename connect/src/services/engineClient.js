@@ -411,3 +411,42 @@ export function startAudioStreamToEngine(analysisId, mediaStreamTrack, options =
   activeTapCleanup = cleanup;
   return cleanup;
 }
+
+/**
+ * Fetches the global QA test state from the backend.
+ */
+export async function getQAState() {
+  const url = `${ENGINE_HTTP_BASE}/qa/state`;
+  try {
+    const res = await fetch(url);
+    if (res.ok) {
+      return await res.json();
+    }
+  } catch (err) {
+    console.warn('[QA-CLIENT] Failed to fetch global QA state:', err);
+  }
+  return { enabled: false, scenario: 'HIGH' };
+}
+
+/**
+ * Updates the global QA test state on the backend, which automatically
+ * broadcasts QA_MODE_UPDATED to all connected clients.
+ */
+export async function setQAState(enabled, scenario = 'HIGH') {
+  const url = `${ENGINE_HTTP_BASE}/qa/state`;
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled: Boolean(enabled), scenario }),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      console.info('[QA-CLIENT] Global QA state updated successfully:', data);
+      return data;
+    }
+  } catch (err) {
+    console.error('[QA-CLIENT] Failed to update global QA state:', err);
+  }
+  return null;
+}

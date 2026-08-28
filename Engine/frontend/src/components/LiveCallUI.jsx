@@ -4,7 +4,7 @@ import {
   Play, Square, CheckCircle2, RefreshCw, AlertTriangle, ShieldCheck,
   Radio, Clock, Database, ChevronRight, Activity, FileText
 } from 'lucide-react';
-import { startAnalysis, requestVerification, resolveWsBase, API_BASE } from '../services/api';
+import { startAnalysis, requestVerification, resolveWsBase, API_BASE, fetchQAState, updateQAState } from '../services/api';
 
 function formatScore(val, digits = 1) {
   if (val === null || val === undefined || isNaN(Number(val))) return null;
@@ -99,6 +99,9 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId }) {
   const [rmsVolume, setRmsVolume] = useState(0);
   const [analysisId, setAnalysisId] = useState(initialCallId || null);
 
+  // Global QA Simulation Test State (Synchronized with Backend & All Connected Clients)
+  const [qaState, setQaState] = useState({ enabled: false, scenario: 'HIGH' });
+
   // Real AI Outputs from backend voice authenticity streaming detector
   const [riskData, setRiskData] = useState({
     riskScore: null,
@@ -125,7 +128,15 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId }) {
     verificationRequired: false,
     windowsAnalyzed: 0,
     lastLatencyMs: null,
+    simulated: false,
   });
+
+  // Fetch initial global QA state on mount
+  useEffect(() => {
+    fetchQAState().then((s) => {
+      if (s && s.enabled !== undefined) setQaState(s);
+    });
+  }, []);
 
   // Diagnostic Pipeline tracker
   const [pipelineState, setPipelineState] = useState({
@@ -267,6 +278,27 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId }) {
 
           if (data.risk_level === 'HIGH') {
             setShowAlertModal(true);
+          }
+        } else if (data.event === 'QA_MODE_UPDATED') {
+          console.info(`[SYSTEM 2 QA-SYNC] enabled=${data.enabled} scenario=${data.scenario}`);
+          setQaState({ enabled: Boolean(data.enabled), scenario: data.scenario || 'HIGH' });
+          if (data.enabled && data.simulated_data) {
+            const sim = data.simulated_data;
+            setRiskData((prev) => ({
+              ...prev,
+              riskScore: sim.risk_score,
+              riskLevel: sim.risk_level,
+              syntheticProbability: sim.synthetic_probability,
+              voiceAuthenticity: sim.authenticity_score,
+              reasons: sim.reasons || [],
+              recommendedAction: sim.action || sim.recommended_action,
+              simulated: true,
+            }));
+            if (sim.risk_level === 'HIGH') {
+              setShowAlertModal(true);
+            }
+          } else if (!data.enabled) {
+            setRiskData((prev) => ({ ...prev, simulated: false }));
           }
         } else if (data.event === 'POLICY_UPDATED') {
           setRiskData((prev) => ({
@@ -802,7 +834,10 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId }) {
           <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 space-y-5">
             <div className="flex justify-between items-center border-b border-slate-100 pb-3">
               <div>
-                <h3 className="text-sm font-bold text-slate-900 uppercase tracking-tight">REAL-TIME RISK ASSESSMENT</h3>
+                <h3 className="text-sm font-bold text-slate-900 uppercase tracking-tight flex items-center">
+                  REAL-TIME RISK ASSESSMENT
+                  {(qaState.enabled || riskData.simulated) && <span className="qa-simulated-pill">SIMULATED</span>}
+                </h3>
                 <p className="text-xs text-slate-500">Continuous multi-factor Bayesian threat synthesis</p>
               </div>
               <button
@@ -1164,6 +1199,40 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId }) {
           </div>
         </div>
       )}
+
+      {/* Global QA Test Control Bar (Synchronized with Backend & All Clients) */}
+      <div className="global-qa-bottom-bar" title="Global QA Test Control (Synchronized across all browsers)">
+        <span className="qa-label">QA</span>
+        <button
+          type="button"
+          className={`qa-toggle-btn ${qaState.enabled ? 'active' : ''}`}
+          onClick={async () => {
+            const next = !qaState.enabled;
+            setQaState((prev) => ({ ...prev, enabled: next }));
+            await updateQAState(next, qaState.scenario);
+          }}
+        >
+          {qaState.enabled ? 'ON' : 'OFF'}
+        </button>
+        {qaState.enabled && (
+          <div className="qa-scenario-group">
+            {['LOW', 'MEDIUM', 'HIGH'].map((sc) => (
+              <button
+                key={sc}
+                type="button"
+                className={`qa-sc-btn ${qaState.scenario === sc ? 'selected' : ''}`}
+                onClick={async () => {
+                  setQaState((prev) => ({ ...prev, scenario: sc }));
+                  await updateQAState(true, sc);
+                }}
+              >
+                {sc}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
+

@@ -23,6 +23,7 @@ from app.services.behavior.behavior_engine import behavior_engine
 from app.services.risk.risk_engine import risk_engine
 from app.services.policy.policy_engine import policy_engine, bank_policy_adapter
 from app.services.system1.callback_service import callback_service
+from app.services.qa import qa_service
 
 logger = logging.getLogger("nirbhaya.websocket")
 ws_router = APIRouter()
@@ -47,13 +48,18 @@ class ConnectionManager:
     async def broadcast_event(self, analysis_id: str, event_data: dict):
         if analysis_id in self.active_connections:
             dead_sockets = set()
-            for ws in self.active_connections[analysis_id]:
+            for ws in list(self.active_connections[analysis_id]):
                 try:
                     await ws.send_text(json.dumps(event_data))
                 except Exception:
                     dead_sockets.add(ws)
             for dead in dead_sockets:
                 self.active_connections[analysis_id].discard(dead)
+
+    async def broadcast_all(self, event_data: dict):
+        """Broadcasts event to all connected WebSocket clients across all active calls."""
+        for analysis_id in list(self.active_connections.keys()):
+            await self.broadcast_event(analysis_id, event_data)
 
 manager = ConnectionManager()
 
@@ -68,6 +74,19 @@ async def websocket_analysis_endpoint(websocket: WebSocket, analysis_id: str):
     print(f"[WS-CONNECT] analysis_id={analysis_id} client={client_host}")
     print(f"[WS-STARTED] analysis_id={analysis_id}")
     
+    # Send current global QA state to newly connected client
+    qa_state = qa_service.get_state()
+    try:
+        await websocket.send_text(json.dumps({
+            "event": "QA_MODE_UPDATED",
+            "enabled": qa_state["enabled"],
+            "scenario": qa_state["scenario"],
+            "updated_at": qa_state["updated_at"],
+            "simulated_data": qa_service.get_simulated_payload() if qa_state["enabled"] else None
+        }))
+    except Exception:
+        pass
+
     # Broadcast ANALYSIS_STARTED
     await manager.broadcast_event(analysis_id, {
         "event": "ANALYSIS_STARTED",
@@ -217,6 +236,17 @@ async def websocket_analysis_endpoint(websocket: WebSocket, analysis_id: str):
                 })
 
                 # 9. Broadcast Authoritative RISK_UPDATED Telemetry
+                is_qa = qa_service.is_enabled()
+                qa_sim_data = qa_service.get_simulated_payload() if is_qa else None
+
+                effective_synth_prob = qa_sim_data["synthetic_probability"] if is_qa else synth_prob
+                effective_auth_score = qa_sim_data["authenticity_score"] if is_qa else auth_score
+                effective_risk_score = qa_sim_data["risk_score"] if is_qa else risk_score_val
+                effective_risk_level = qa_sim_data["risk_level"] if is_qa else risk_level_val
+                effective_label = qa_sim_data["label"] if is_qa else (voice_res.get("label") if voice_res else None)
+                effective_action = qa_sim_data["action"] if is_qa else rec_action
+                effective_reasons = qa_sim_data["reasons"] if is_qa else policy_output.get("reasons", risk_output.get("reasons", []))
+
                 risk_event_payload = {
                     "event": "RISK_UPDATED",
                     "call_id": analysis_id,
@@ -225,30 +255,32 @@ async def websocket_analysis_endpoint(websocket: WebSocket, analysis_id: str):
                     "detector": "LOCAL_AI",
                     "detector_source": voice_res.get("detector_source", "LOCAL_AI") if voice_res else "LOCAL_AI",
                     "model": voice_res.get("model", voice_res.get("model_name", "Acoustic-Spectral-Vocoder-Artifact-Detector (v1.2)")) if voice_res else "Acoustic-Spectral-Vocoder-Artifact-Detector (v1.2)",
-                    "synthetic_probability": synth_prob,
-                    "authenticity_score": auth_score,
-                    "confidence": risk_output.get("overall_confidence", voice_res.get("confidence") if voice_res else None),
-                    "risk_score": risk_score_val,
-                    "risk_level": risk_level_val,
-                    "action": rec_action,
-                    "label": voice_res.get("label") if voice_res else None,
+                    "synthetic_probability": effective_synth_prob,
+                    "authenticity_score": effective_auth_score,
+                    "confidence": qa_sim_data["confidence"] if is_qa else risk_output.get("overall_confidence", voice_res.get("confidence") if voice_res else None),
+                    "risk_score": effective_risk_score,
+                    "risk_level": effective_risk_level,
+                    "action": effective_action,
+                    "label": effective_label,
                     "voice_authenticity": voice_res,
                     "pretrained_deepfake_detector": voice_res,
                     "resemble": voice_res,
                     "risk": {
-                        "score": risk_score_val,
-                        "level": risk_level_val,
-                        "action": rec_action
+                        "score": effective_risk_score,
+                        "level": effective_risk_level,
+                        "action": effective_action
                     },
                     "speaker_similarity": risk_output.get("speaker_similarity"),
                     "context_score": risk_output.get("context_score"),
-                    "reasons": policy_output.get("reasons", risk_output.get("reasons", [])),
-                    "recommended_action": rec_action,
-                    "processing_latency_ms": pipeline_latency_ms
+                    "reasons": effective_reasons,
+                    "recommended_action": effective_action,
+                    "processing_latency_ms": pipeline_latency_ms,
+                    "simulated": is_qa,
+                    "qa_scenario": qa_service.get_scenario() if is_qa else None
                 }
                 
                 print(f"[WS-SEND]\nevent=RISK_UPDATED\n")
-                print(f"[TELEMETRY-BROADCAST] call_id={analysis_id} window={window_index} risk_score={risk_score_val} synthetic_probability={synth_prob} risk_level={risk_level_val} action={rec_action}")
+                print(f"[TELEMETRY-BROADCAST] call_id={analysis_id} window={window_index} risk_score={effective_risk_score} synthetic_probability={effective_synth_prob} risk_level={effective_risk_level} action={effective_action} simulated={is_qa}")
                 await manager.broadcast_event(analysis_id, risk_event_payload)
 
                 # 10. Broadcast POLICY_UPDATED
@@ -256,125 +288,131 @@ async def websocket_analysis_endpoint(websocket: WebSocket, analysis_id: str):
                     "event": "POLICY_UPDATED",
                     "call_id": analysis_id,
                     "analysis_id": analysis_id,
-                    "recommended_action": rec_action,
+                    "recommended_action": effective_action,
                     "verification_required": policy_output.get("verification_required", False),
-                    "reasons": policy_output.get("reasons", [])
+                    "reasons": effective_reasons,
+                    "simulated": is_qa
                 })
 
                 # 11. Broadcast ALERT_CREATED if HIGH risk
-                if risk_level_val == "HIGH":
+                if effective_risk_level == "HIGH":
                     sec_msg = bank_policy_adapter.format_system1_message(risk_output, policy_output)
                     await manager.broadcast_event(analysis_id, {
                         "event": "ALERT_CREATED",
                         "call_id": analysis_id,
                         "analysis_id": analysis_id,
                         "alert_level": "HIGH",
-                        "security_message": sec_msg,
-                        "recommended_action": "HOLD & INDEPENDENTLY VERIFY"
+                        "security_message": f"[SIMULATED QA] {sec_msg}" if is_qa else sec_msg,
+                        "recommended_action": "HOLD & INDEPENDENTLY VERIFY",
+                        "simulated": is_qa
                     })
 
-                # 12. Asynchronously Trigger System 1 Server Callback (Non-blocking)
-                try:
-                    cb_res = await callback_service.send_callback(
-                        event="RISK_UPDATED",
-                        call_id=analysis_id,
-                        analysis_id=analysis_id,
-                        risk_output=risk_output,
-                        policy_output=policy_output,
-                        verification_required=policy_output.get("verification_required", False),
-                        resemble_res=voice_res,
-                        window_index=window_index
-                    )
-                    print(f"[CALLBACK] status={cb_res.get('status')} HTTP={cb_res.get('http_status')} error={cb_res.get('error')}")
-                except Exception as cb_err:
-                    print(f"[CALLBACK] status=FAILED HTTP=None error={cb_err}")
-
-                # 13. Persist Telemetry Metadata to DB safely (Non-blocking)
-                try:
-                    async with AsyncSessionLocal() as db:
-                        call_res = await db.execute(select(Call).where(Call.id == analysis_id))
-                        call_obj = call_res.scalars().first()
-                        if not call_obj:
-                            call_obj = Call(
-                                id=analysis_id,
-                                caller_id="caller_stream",
-                                receiver_id="receiver_stream",
-                                channel="VOIP",
-                                status="ACTIVE"
-                            )
-                            db.add(call_obj)
-                            await db.flush()
-
-                        session_res = await db.execute(
-                            select(AnalysisSession).where((AnalysisSession.id == analysis_id) | (AnalysisSession.call_id == analysis_id))
-                        )
-                        session_obj = session_res.scalars().first()
-                        if not session_obj:
-                            session_obj = AnalysisSession(
-                                id=analysis_id,
-                                call_id=call_obj.id,
-                                caller_id=call_obj.caller_id,
-                                receiver_id=call_obj.receiver_id,
-                                status="PROCESSING"
-                            )
-                            db.add(session_obj)
-                            await db.flush()
-                        else:
-                            session_obj.status = "PROCESSING"
-
-                        window_rec = AudioAnalysisWindow(
-                            id=str(uuid.uuid4()),
-                            analysis_id=session_obj.id,
-                            window_index=window_index,
-                            duration_ms=processed_audio.get("duration_ms", 2500.0),
-                            sample_rate=processed_audio.get("sample_rate", 16000),
-                            channels=processed_audio.get("channels", 1),
-                            speech_detected=processed_audio.get("speech_detected", True),
-                            audio_quality_score=processed_audio.get("audio_quality_score", 1.0)
-                        )
-                        db.add(window_rec)
-                        await db.flush()
-
-                        voice_rec = VoiceAnalysisResult(
-                            analysis_id=session_obj.id,
-                            window_id=window_rec.id,
-                            synthetic_probability=synth_prob,
-                            authenticity_score=auth_score,
-                            confidence=risk_output.get("overall_confidence", 0.0) or 0.0,
-                            audio_quality=processed_audio.get("audio_quality_score", 1.0),
-                            model_name=voice_res.get("model", "Sara1708/deepfake-audio-wav2vec2") if voice_res else "Sara1708/deepfake-audio-wav2vec2",
-                            model_version="1.0",
-                            inference_time_ms=pipeline_latency_ms,
-                            status=voice_res.get("status", "SUCCESS") if voice_res else "ERROR"
-                        )
-                        db.add(voice_rec)
-
-                        risk_rec = RiskScore(
-                            analysis_id=session_obj.id,
-                            risk_score=risk_score_val if risk_score_val is not None else 0.0,
-                            risk_level=risk_level_val if risk_level_val is not None else "LOW",
-                            overall_confidence=risk_output.get("overall_confidence", 0.0) or 0.0,
-                            synthetic_probability=synth_prob,
-                            speaker_similarity=risk_output.get("speaker_similarity"),
-                            context_score=risk_output.get("context_score"),
-                            transaction_score=risk_output.get("transaction_score"),
-                            behavior_score=risk_output.get("behavior_score"),
-                            reasons=policy_output.get("reasons", [])
-                        )
-                        db.add(risk_rec)
-
-                        policy_rec = PolicyDecision(
-                            analysis_id=session_obj.id,
-                            policy_profile=policy_output.get("policy_profile", "BANK"),
-                            recommended_action=rec_action,
+                # 12. Asynchronously Trigger System 1 Server Callback ONLY when NOT in QA mode
+                if not is_qa:
+                    try:
+                        cb_res = await callback_service.send_callback(
+                            event="RISK_UPDATED",
+                            call_id=analysis_id,
+                            analysis_id=analysis_id,
+                            risk_output=risk_output,
+                            policy_output=policy_output,
                             verification_required=policy_output.get("verification_required", False),
-                            reasons=policy_output.get("reasons", [])
+                            resemble_res=voice_res,
+                            window_index=window_index
                         )
-                        db.add(policy_rec)
+                        print(f"[CALLBACK] status={cb_res.get('status')} HTTP={cb_res.get('http_status')} error={cb_res.get('error')}")
+                    except Exception as cb_err:
+                        print(f"[CALLBACK] status=FAILED HTTP=None error={cb_err}")
+                else:
+                    print(f"[CALLBACK-BYPASS] QA Mode active ({qa_service.get_scenario()}). Protected real fraud callback.")
 
-                        await db.commit()
-                except Exception as db_err:
-                    print(f"[DB-ERROR] Failed to persist window telemetry: {db_err}")
+                # 13. Persist Telemetry Metadata to DB safely ONLY when NOT in QA mode
+                if not is_qa:
+                    try:
+                        async with AsyncSessionLocal() as db:
+                            call_res = await db.execute(select(Call).where(Call.id == analysis_id))
+                            call_obj = call_res.scalars().first()
+                            if not call_obj:
+                                call_obj = Call(
+                                    id=analysis_id,
+                                    caller_id="caller_stream",
+                                    receiver_id="receiver_stream",
+                                    channel="VOIP",
+                                    status="ACTIVE"
+                                )
+                                db.add(call_obj)
+                                await db.flush()
+
+                            session_res = await db.execute(
+                                select(AnalysisSession).where((AnalysisSession.id == analysis_id) | (AnalysisSession.call_id == analysis_id))
+                            )
+                            session_obj = session_res.scalars().first()
+                            if not session_obj:
+                                session_obj = AnalysisSession(
+                                    id=analysis_id,
+                                    call_id=call_obj.id,
+                                    caller_id=call_obj.caller_id,
+                                    receiver_id=call_obj.receiver_id,
+                                    status="PROCESSING"
+                                )
+                                db.add(session_obj)
+                                await db.flush()
+                            else:
+                                session_obj.status = "PROCESSING"
+
+                            window_rec = AudioAnalysisWindow(
+                                id=str(uuid.uuid4()),
+                                analysis_id=session_obj.id,
+                                window_index=window_index,
+                                duration_ms=processed_audio.get("duration_ms", 2500.0),
+                                sample_rate=processed_audio.get("sample_rate", 16000),
+                                channels=processed_audio.get("channels", 1),
+                                speech_detected=processed_audio.get("speech_detected", True),
+                                audio_quality_score=processed_audio.get("audio_quality_score", 1.0)
+                            )
+                            db.add(window_rec)
+                            await db.flush()
+
+                            voice_rec = VoiceAnalysisResult(
+                                analysis_id=session_obj.id,
+                                window_id=window_rec.id,
+                                synthetic_probability=synth_prob,
+                                authenticity_score=auth_score,
+                                confidence=risk_output.get("overall_confidence", 0.0) or 0.0,
+                                audio_quality=processed_audio.get("audio_quality_score", 1.0),
+                                model_name=voice_res.get("model", "Sara1708/deepfake-audio-wav2vec2") if voice_res else "Sara1708/deepfake-audio-wav2vec2",
+                                model_version="1.0",
+                                inference_time_ms=pipeline_latency_ms,
+                                status=voice_res.get("status", "SUCCESS") if voice_res else "ERROR"
+                            )
+                            db.add(voice_rec)
+
+                            risk_rec = RiskScore(
+                                analysis_id=session_obj.id,
+                                risk_score=risk_score_val if risk_score_val is not None else 0.0,
+                                risk_level=risk_level_val if risk_level_val is not None else "LOW",
+                                overall_confidence=risk_output.get("overall_confidence", 0.0) or 0.0,
+                                synthetic_probability=synth_prob,
+                                speaker_similarity=risk_output.get("speaker_similarity"),
+                                context_score=risk_output.get("context_score"),
+                                transaction_score=risk_output.get("transaction_score"),
+                                behavior_score=risk_output.get("behavior_score"),
+                                reasons=policy_output.get("reasons", [])
+                            )
+                            db.add(risk_rec)
+
+                            policy_rec = PolicyDecision(
+                                analysis_id=session_obj.id,
+                                policy_profile=policy_output.get("policy_profile", "BANK"),
+                                recommended_action=rec_action,
+                                verification_required=policy_output.get("verification_required", False),
+                                reasons=policy_output.get("reasons", [])
+                            )
+                            db.add(policy_rec)
+
+                            await db.commit()
+                    except Exception as db_err:
+                        print(f"[DB-ERROR] Failed to persist window telemetry: {db_err}")
 
             elif text_data:
                 try:

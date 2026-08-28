@@ -101,10 +101,15 @@ def test_websocket_real_audio_streaming_in_process():
     audio_bytes = generate_synthetic_like_audio(2.5, 16000)
 
     with client.websocket_connect(f"/ws/analysis/{call_id}") as ws:
-        # Receive initial ANALYSIS_STARTED
-        init_msg = ws.receive_json()
-        assert init_msg["event"] == "ANALYSIS_STARTED"
-        assert init_msg["analysis_id"] == call_id
+        # Receive initial handshake messages (QA_MODE_UPDATED, ANALYSIS_STARTED)
+        msg1 = ws.receive_json()
+        assert msg1["event"] in ["QA_MODE_UPDATED", "ANALYSIS_STARTED"]
+        if msg1["event"] == "QA_MODE_UPDATED":
+            msg2 = ws.receive_json()
+            assert msg2["event"] == "ANALYSIS_STARTED"
+            assert msg2["analysis_id"] == call_id
+        else:
+            assert msg1["analysis_id"] == call_id
 
         # Send binary audio chunk
         ws.send_bytes(audio_bytes)

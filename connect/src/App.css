@@ -75,4 +75,16 @@
 
 .high-risk-alert-banner { margin:10px 0; padding:12px 14px; border:1px solid #f87171; border-radius:14px; background:#fef2f2; color:#991b1b; animation:arrive .3s ease-out; }
 .alert-badge { font-size:10px; font-weight:800; letter-spacing:0.5px; color:#dc2626; margin-bottom:4px; }
-.high-risk-alert-banner p { margin:0; font-size:11px; line-height:1.4; }
+.high-risk-alert-banner p { margin:0; font-size:11px; line-height:1.4; }
+
+/* Global QA Test Control Bar & Simulated Pill */
+.global-qa-bottom-bar { position:fixed; bottom:0; left:50%; transform:translateX(-50%); display:flex; align-items:center; gap:6px; height:16px; padding:0 8px; background:rgba(17,24,39,0.85); backdrop-filter:blur(8px); border-top-left-radius:6px; border-top-right-radius:6px; z-index:9999; font-family:monospace; font-size:9px; color:#9ca3af; user-select:none; transition:all .2s ease; }
+.global-qa-bottom-bar:hover { background:rgba(17,24,39,0.95); height:18px; }
+.qa-label { font-weight:800; color:#e5e7eb; letter-spacing:0.5px; }
+.qa-toggle-btn { background:#374151; color:#9ca3af; border:none; padding:1px 5px; border-radius:3px; font-size:8px; font-weight:700; cursor:pointer; line-height:1.2; }
+.qa-toggle-btn.active { background:#3b82f6; color:#fff; }
+.qa-scenario-group { display:flex; gap:2px; align-items:center; }
+.qa-sc-btn { background:transparent; color:#9ca3af; border:1px solid #4b5563; padding:0 4px; border-radius:2px; font-size:7.5px; cursor:pointer; line-height:1.2; }
+.qa-sc-btn.selected { background:#2563eb; color:#fff; border-color:#3b82f6; font-weight:700; }
+.qa-simulated-pill { display:inline-block; padding:1px 5px; margin-left:6px; background:#fef3c7; color:#b45309; border:1px solid #fde68a; font-size:8px; font-weight:800; border-radius:4px; letter-spacing:0.5px; vertical-align:middle; text-transform:uppercase; animation:pulse 2s infinite; }
+

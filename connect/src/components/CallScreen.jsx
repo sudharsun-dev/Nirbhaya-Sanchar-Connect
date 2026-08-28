@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef, useCallback, useMemo } from 'react'
 import { connectToRoom, disconnectFromRoom } from '../services/livekit'
-import { connectEngineStream, notifyEngineStartCall, startAudioStreamToEngine } from '../services/engineClient'
+import { connectEngineStream, notifyEngineStartCall, startAudioStreamToEngine, getQAState, setQAState } from '../services/engineClient'
 import CallControls from './CallControls'
 import ParticipantList from './ParticipantList'
 import ConnectionStatus from './ConnectionStatus'
@@ -24,6 +24,9 @@ export default function CallScreen({ name, roomName, callId, onEnded }) {
   const [connection, setConnection] = useState(null)
   const [retryCount, setRetryCount] = useState(0)
 
+  // Global QA Simulation Test State (Synchronized across all browsers)
+  const [qaState, setQaState] = useState({ enabled: false, scenario: 'HIGH' })
+
   // System 2 Security Intelligence State
   const [securityState, setSecurityState] = useState({
     status: 'INITIALIZING', // INITIALIZING, ACTIVE, OFFLINE, DEGRADED
@@ -41,9 +44,22 @@ export default function CallScreen({ name, roomName, callId, onEnded }) {
     windowsAnalyzed: 0,
     lastLatencyMs: null,
     audioQuality: null,
+    detectorStatus: null,
+    label: null,
+    authenticityScore: null,
     alertMessage: null,
+    simulated: false,
   })
   const [showSecurityDrawer, setShowSecurityDrawer] = useState(false)
+
+  // Fetch initial global QA state on mount
+  useEffect(() => {
+    getQAState().then((state) => {
+      if (state && state.enabled !== undefined) {
+        setQaState(state)
+      }
+    })
+  }, [])
 
   const effectiveCallId = useRef(callId || `call_${roomName || Date.now()}`).current
 
@@ -99,7 +115,28 @@ export default function CallScreen({ name, roomName, callId, onEnded }) {
               speakerSimilarity: event.speaker_similarity,
               reasons: event.reasons || [],
               recommendedAction: event.action || event.recommended_action || 'CONTINUE',
+              simulated: Boolean(event.simulated),
             }))
+          } else if (event.event === 'QA_MODE_UPDATED') {
+            console.info(`[QA-SYNC] enabled=${event.enabled} scenario=${event.scenario}`);
+            setQaState({ enabled: Boolean(event.enabled), scenario: event.scenario || 'HIGH' });
+            if (event.enabled && event.simulated_data) {
+              const sim = event.simulated_data;
+              setSecurityState((prev) => ({
+                ...prev,
+                status: 'ACTIVE',
+                riskScore: sim.risk_score,
+                riskLevel: sim.risk_level,
+                syntheticProbability: sim.synthetic_probability,
+                authenticityScore: sim.authenticity_score,
+                label: sim.label,
+                reasons: sim.reasons || [],
+                recommendedAction: sim.action || sim.recommended_action,
+                simulated: true,
+              }));
+            } else if (!event.enabled) {
+              setSecurityState((prev) => ({ ...prev, simulated: false }));
+            }
           } else if (event.event === 'ALERT_CREATED') {
             setSecurityState((prev) => ({
               ...prev,
@@ -272,7 +309,10 @@ export default function CallScreen({ name, roomName, callId, onEnded }) {
         {showSecurityDrawer && (
           <div className="security-details-drawer">
             <div className="drawer-header">
-              <h3>VOICE AUTHENTICITY ENGINE — PRETRAINED DEEPFAKE DETECTOR</h3>
+              <h3>
+                VOICE AUTHENTICITY ENGINE — PRETRAINED DEEPFAKE DETECTOR
+                {(qaState.enabled || securityState.simulated) && <span className="qa-simulated-pill">SIMULATED</span>}
+              </h3>
               <span className={`risk-tag ${String(securityState.riskLevel || 'low').toLowerCase()}`}>{securityState.riskLevel || 'LOW'} RISK</span>
             </div>
 
@@ -283,7 +323,10 @@ export default function CallScreen({ name, roomName, callId, onEnded }) {
               </div>
               <div className="metric-box">
                 <span className="label">STATUS</span>
-                <span className="value">{securityState.detectorStatus || (securityState.status === 'ACTIVE' ? 'PRETRAINED MODEL ACTIVE' : 'INITIALIZING')}</span>
+                <span className="value">
+                  {securityState.detectorStatus || (securityState.status === 'ACTIVE' ? 'PRETRAINED MODEL ACTIVE' : 'INITIALIZING')}
+                  {(qaState.enabled || securityState.simulated) && ' (QA MODE)'}
+                </span>
               </div>
               <div className="metric-box">
                 <span className="label">SYNTHETIC PROBABILITY</span>
@@ -332,7 +375,10 @@ export default function CallScreen({ name, roomName, callId, onEnded }) {
         {/* High Risk Security Alert Modal / Warning */}
         {isHighRisk && (
           <div className="high-risk-alert-banner" role="alert">
-            <div className="alert-badge">SECURITY ALERT: POTENTIAL VOICE IMPERSONATION</div>
+            <div className="alert-badge">
+              SECURITY ALERT: POTENTIAL VOICE IMPERSONATION
+              {(qaState.enabled || securityState.simulated) && <span className="qa-simulated-pill">SIMULATED</span>}
+            </div>
             <p>
               Elevated synthetic voice signals detected. Recommended action: <strong>HOLD & INDEPENDENTLY VERIFY</strong>.
             </p>
@@ -370,6 +416,39 @@ export default function CallScreen({ name, roomName, callId, onEnded }) {
       <aside>
         <ParticipantList participants={participants} />
       </aside>
+
+      {/* Global QA Test Control Bar (Synchronized with Backend & All Clients) */}
+      <div className="global-qa-bottom-bar" title="Global QA Test Control (Synchronized across all browsers)">
+        <span className="qa-label">QA</span>
+        <button
+          type="button"
+          className={`qa-toggle-btn ${qaState.enabled ? 'active' : ''}`}
+          onClick={async () => {
+            const next = !qaState.enabled;
+            setQaState((prev) => ({ ...prev, enabled: next }));
+            await setQAState(next, qaState.scenario);
+          }}
+        >
+          {qaState.enabled ? 'ON' : 'OFF'}
+        </button>
+        {qaState.enabled && (
+          <div className="qa-scenario-group">
+            {['LOW', 'MEDIUM', 'HIGH'].map((sc) => (
+              <button
+                key={sc}
+                type="button"
+                className={`qa-sc-btn ${qaState.scenario === sc ? 'selected' : ''}`}
+                onClick={async () => {
+                  setQaState((prev) => ({ ...prev, scenario: sc }));
+                  await setQAState(true, sc);
+                }}
+              >
+                {sc}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
     </section>
   )
 }
