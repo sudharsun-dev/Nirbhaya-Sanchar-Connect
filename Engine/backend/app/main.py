@@ -6,7 +6,7 @@ from fastapi.responses import JSONResponse
 
 from app.config import settings
 from app.database.session import init_db
-from app.api.routes import router as api_router
+from app.api.routes import router as api_router, get_system_health
 from app.api.websocket import ws_router
 
 @asynccontextmanager
@@ -64,7 +64,7 @@ app.add_middleware(
     allow_origins=settings.cors_origins_list,
     allow_origin_regex=r"https://nirbhaya-sanchar-connect.*\.vercel\.app|https://.*\.onrender\.com|http://localhost:.*|http://127\.0\.0\.1:.*",
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+    allow_methods=["*"],
     allow_headers=["*"],
     expose_headers=["*"],
 )
@@ -80,6 +80,11 @@ async def global_exception_handler(request: Request, exc: Exception):
             "path": request.url.path
         }
     )
+
+# Root health check endpoint for cloud load balancer and monitoring
+@app.get("/health")
+async def health_root():
+    return await get_system_health()
 
 # Include routers
 app.include_router(api_router, prefix="/api/v1", tags=["System 2 Engine APIs"])
