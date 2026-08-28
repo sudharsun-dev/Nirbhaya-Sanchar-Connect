@@ -33,6 +33,8 @@ services:
     dockerContext: Engine
     plan: standard
     envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.8"
       - key: ENVIRONMENT
         value: production
       - key: CORS_ORIGINS

@@ -1,5 +1,6 @@
 import uuid
 import httpx
+import torch
 from datetime import datetime
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, status
@@ -89,6 +90,8 @@ async def get_system_health():
                     "weights_loaded": voice_authenticity_engine.weights_loaded,
                     "weights_sha256": voice_authenticity_engine.weights_sha256,
                     "total_parameters": voice_authenticity_engine.total_parameters,
+                    "torch_version": torch.__version__,
+                    "device": "cpu",
                     "aasist": {
                         "status": "ONLINE" if voice_authenticity_engine.weights_loaded else "OFFLINE",
                         "model": "AASIST",
