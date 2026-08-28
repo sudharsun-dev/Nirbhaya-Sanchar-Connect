@@ -171,12 +171,64 @@ async def test_callback_service_with_ensemble_payload():
             risk_output=risk_output,
             policy_output=policy_output,
             verification_required=True,
-            ensemble_res=ensemble_res
+            ensemble_res=ensemble_res,
+            window_index=4
         )
         assert res["status"] == "SENT"
         assert mock_post.called
         sent_payload = mock_post.call_args[1]["json"]
         assert sent_payload["risk_score"] == 78.5
+        assert sent_payload["window_index"] == 4
+        assert sent_payload["action"] == "HOLD & INDEPENDENTLY VERIFY"
+        assert sent_payload["detectors"]["aasist"] is True
+        assert sent_payload["detectors"]["resemble"] is True
         assert sent_payload["aasist_synthetic_probability"] == 82.0
         assert sent_payload["resemble_synthetic_probability"] == 75.0
         assert sent_payload["detector_agreement"] == "HIGH"
+
+@pytest.mark.asyncio
+async def test_resemble_stream_lifecycle_and_chunk():
+    detector = ResembleStreamingDetector()
+    
+    class FakeWs:
+        def __init__(self):
+            self.closed = False
+            self.sent_msgs = []
+        async def send(self, data):
+            self.sent_msgs.append(data)
+        async def close(self):
+            self.closed = True
+        def __aiter__(self):
+            return self
+        async def __anext__(self):
+            await asyncio.sleep(10)
+            raise StopAsyncIteration
+
+    mock_ws = FakeWs()
+    
+    with patch("app.services.voice_detection.resemble_detector.settings.RESEMBLE_API_KEY", "real_key_mock_12345"):
+        with patch("websockets.connect", new_callable=AsyncMock, return_value=mock_ws):
+            session = await detector.get_or_create_session("call_lifecycle_test")
+            assert session is not None
+            assert session.is_connected is True
+
+            # Ingest fake Resemble chunk
+            session.latest_result = {
+                "available": True,
+                "status": "ACTIVE",
+                "label": "REAL",
+                "synthetic_probability": 14.5,
+                "aggregated_score": 0.145,
+                "consistency": 0.92
+            }
+
+            res = await detector.send_audio_chunk("call_lifecycle_test", b"dummy_pcm_bytes", window_index=1)
+            assert res["status"] == "ACTIVE"
+            assert res["label"] == "REAL"
+            assert res["synthetic_probability"] == 14.5
+            assert len(mock_ws.sent_msgs) >= 1
+
+            # Conclude call stream
+            final_res = await detector.close_stream("call_lifecycle_test")
+            assert final_res["status"] == "ACTIVE"
+            assert mock_ws.closed is True

@@ -108,6 +108,18 @@ class MultiModelVoiceEnsemble:
         ensemble_synth_rounded = round(ensemble_synth, 2) if ensemble_synth is not None else None
         authenticity_rounded = round(100.0 - ensemble_synth_rounded, 2) if ensemble_synth_rounded is not None else None
 
+        combined_block = {
+            "synthetic_probability": ensemble_synth_rounded,
+            "authenticity": authenticity_rounded,
+            "authenticity_score": authenticity_rounded,
+            "confidence": ensemble_conf,
+            "detector_agreement": detector_agreement,
+            "method": self.method_label,
+            "detectors_available": [
+                name for name, val in [("AASIST", aasist_synth is not None), ("RESEMBLE", resemble_synth is not None)] if val
+            ]
+        }
+
         return {
             "status": "SUCCESS" if ensemble_synth_rounded is not None else "UNAVAILABLE",
             "synthetic_probability": ensemble_synth_rounded,
@@ -119,6 +131,7 @@ class MultiModelVoiceEnsemble:
             "aasist": {
                 "status": aasist_status,
                 "synthetic_probability": aasist_synth,
+                "authenticity": aasist_res.get("authenticity_score") if aasist_res else None,
                 "authenticity_score": aasist_res.get("authenticity_score") if aasist_res else None,
                 "confidence": aasist_conf if aasist_synth is not None else 0.0,
                 "model_name": "AASIST",
@@ -129,9 +142,11 @@ class MultiModelVoiceEnsemble:
                 "status": resemble_status,
                 "label": resemble_label,
                 "synthetic_probability": resemble_synth,
+                "confidence": resemble_conf if resemble_synth is not None else 0.0,
                 "aggregated_score": resemble_agg_score,
                 "consistency": resemble_consistency
             },
+            "combined": combined_block,
             "discrepancy_flag": bool(detector_agreement == "LOW")
         }
 

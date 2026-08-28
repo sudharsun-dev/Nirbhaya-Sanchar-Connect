@@ -88,7 +88,16 @@ async def get_system_health():
                     "license": voice_authenticity_engine.model_license,
                     "weights_loaded": voice_authenticity_engine.weights_loaded,
                     "weights_sha256": voice_authenticity_engine.weights_sha256,
-                    "total_parameters": voice_authenticity_engine.total_parameters
+                    "total_parameters": voice_authenticity_engine.total_parameters,
+                    "aasist": {
+                        "status": "ONLINE" if voice_authenticity_engine.weights_loaded else "OFFLINE",
+                        "model": "AASIST",
+                        "version": "ASVspoof2019-LA"
+                    },
+                    "resemble": {
+                        "status": "CONFIGURED" if resemble_detector.is_configured else "NOT_CONFIGURED",
+                        "provider": "Resemble AI"
+                    }
                 }
             ),
             "resemble": ServiceHealthStatus(

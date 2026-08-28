@@ -40,7 +40,10 @@ async def lifespan(app: FastAPI):
     except Exception as spk_err:
         print(f"[SPEAKER] status=OFFLINE error={spk_err}")
 
-    # 4. System 1 Callback (Defensive)
+    # 4. Resemble AI Service Diagnostic (Defensive)
+    print(f"[RESEMBLE-CONFIG] configured={'true' if settings.is_resemble_configured else 'false'}")
+
+    # 5. System 1 Callback (Defensive)
     try:
         from app.services.system1.callback_service import callback_service
         print(f"[CALLBACK] target={callback_service.callback_url} status=CONFIGURED")

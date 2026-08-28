@@ -178,6 +178,7 @@ async def websocket_analysis_endpoint(websocket: WebSocket, analysis_id: str):
                     aasist_res=voice_res,
                     resemble_res=resemble_res
                 )
+                print(f"[TRACE-COMBINED-RESULT] call_id={analysis_id} window_index={window_index} synthetic_probability={ensemble_res.get('synthetic_probability')} agreement={ensemble_res.get('detector_agreement')} confidence={ensemble_res.get('confidence')}")
                 print(f"[ENSEMBLE-RESULT] call_id={analysis_id} synthetic_probability={ensemble_res.get('synthetic_probability')} agreement={ensemble_res.get('detector_agreement')} confidence={ensemble_res.get('confidence')}")
 
                 # 5. Speaker Verification (Independent)
@@ -248,6 +249,7 @@ async def websocket_analysis_endpoint(websocket: WebSocket, analysis_id: str):
                 pipeline_latency_ms = round((time.time() - start_pipeline_time) * 1000, 2)
                 auth_score = ensemble_res.get("authenticity_score")
 
+                print(f"[TRACE-RISK-RESULT] call_id={analysis_id} window_index={window_index} synthetic_probability={risk_output.get('synthetic_probability')} authenticity_score={auth_score} confidence={risk_output.get('overall_confidence')} risk_score={risk_output.get('risk_score')} risk_level={risk_output.get('risk_level')} recommended_action={policy_output.get('recommended_action')}")
                 print(f"[TRACE-RISK] call_id={analysis_id} window_index={window_index} synthetic_probability={risk_output.get('synthetic_probability')} authenticity_score={auth_score} confidence={risk_output.get('overall_confidence')} risk_score={risk_output.get('risk_score')} risk_level={risk_output.get('risk_level')} recommended_action={policy_output.get('recommended_action')}")
                 print(f"[S2-RISK-RESULT] call_id={analysis_id} window={window_index} risk_score={risk_output.get('risk_score')} risk_level={risk_output.get('risk_level')} action={policy_output.get('recommended_action')} synthetic_probability={risk_output.get('synthetic_probability')}")
                 print(f"[RISK-OUTPUT] risk_score={risk_output.get('risk_score')} risk_level={risk_output.get('risk_level')} overall_confidence={risk_output.get('overall_confidence')}")
@@ -265,12 +267,17 @@ async def websocket_analysis_endpoint(websocket: WebSocket, analysis_id: str):
                     "processing_latency_ms": pipeline_latency_ms
                 })
 
-                # 11. Broadcast Multi-Model RISK_UPDATED
+                # 11. Broadcast Multi-Model RISK_UPDATED (Comprehensive & Backward-Compatible)
                 risk_event_payload = {
                     "event": "RISK_UPDATED",
                     "call_id": analysis_id,
                     "analysis_id": analysis_id,
                     "window_index": window_index,
+                    "audio": {
+                        "sample_rate": sr,
+                        "channels": ch,
+                        "duration_ms": dur_ms
+                    },
                     "risk_score": risk_output["risk_score"],
                     "risk_level": risk_output["risk_level"],
                     "overall_confidence": risk_output["overall_confidence"],
@@ -278,11 +285,22 @@ async def websocket_analysis_endpoint(websocket: WebSocket, analysis_id: str):
                     "authenticity_score": auth_score,
                     "aasist": ensemble_res["aasist"],
                     "resemble": ensemble_res["resemble"],
+                    "combined": ensemble_res.get("combined", {
+                        "synthetic_probability": ensemble_res["synthetic_probability"],
+                        "authenticity": auth_score,
+                        "confidence": ensemble_res["confidence"],
+                        "detector_agreement": ensemble_res["detector_agreement"]
+                    }),
                     "ensemble": {
                         "synthetic_probability": ensemble_res["synthetic_probability"],
                         "confidence": ensemble_res["confidence"],
                         "detector_agreement": ensemble_res["detector_agreement"],
                         "method": ensemble_res["method"]
+                    },
+                    "risk": {
+                        "score": risk_output["risk_score"],
+                        "level": risk_output["risk_level"],
+                        "action": policy_output["recommended_action"]
                     },
                     "speaker_similarity": risk_output["speaker_similarity"],
                     "context_score": risk_output["context_score"],
@@ -290,6 +308,7 @@ async def websocket_analysis_endpoint(websocket: WebSocket, analysis_id: str):
                     "recommended_action": policy_output["recommended_action"],
                     "processing_latency_ms": pipeline_latency_ms
                 }
+                print(f"[TRACE-TELEMETRY-BROADCAST] call_id={analysis_id} window_index={window_index} event=RISK_UPDATED risk_score={risk_output['risk_score']} synthetic_probability={risk_output['synthetic_probability']}")
                 print(f"[TRACE-TELEMETRY-SEND] call_id={analysis_id} window_index={window_index} event=RISK_UPDATED risk_score={risk_output['risk_score']} synthetic_probability={risk_output['synthetic_probability']}")
                 print(f"[S2-TELEMETRY-BROADCAST] call_id={analysis_id} window={window_index} synthetic_probability={risk_output['synthetic_probability']} risk_score={risk_output['risk_score']} risk_level={risk_output['risk_level']} action={policy_output['recommended_action']}")
                 print(f"[TELEMETRY-SEND] analysis_id={analysis_id} window={window_index} risk_score={risk_output['risk_score']} synthetic_probability={risk_output['synthetic_probability']} risk_level={risk_output['risk_level']} action={policy_output['recommended_action']}")
@@ -326,7 +345,8 @@ async def websocket_analysis_endpoint(websocket: WebSocket, analysis_id: str):
                         risk_output=risk_output,
                         policy_output=policy_output,
                         verification_required=policy_output["verification_required"],
-                        ensemble_res=ensemble_res
+                        ensemble_res=ensemble_res,
+                        window_index=window_index
                     )
                     print(f"[TRACE-SYSTEM1-CALLBACK] call_id={analysis_id} window_index={window_index} risk_score={risk_output['risk_score']} risk_level={risk_output['risk_level']} status={cb_res.get('status')}")
                     print(f"[CALLBACK] status={cb_res.get('status')} HTTP={cb_res.get('http_status')} error={cb_res.get('error')}")
