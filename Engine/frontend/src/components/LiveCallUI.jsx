@@ -108,6 +108,81 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId, globalQA
   const [rmsVolume, setRmsVolume] = useState(0);
   const [analysisId, setAnalysisId] = useState(activeCall?.call_id || initialCallId || null);
 
+  // Manual Audio File Upload State
+  const [selectedAudioFile, setSelectedAudioFile] = useState(null);
+  const [isFileAnalyzing, setIsFileAnalyzing] = useState(false);
+  const [fileAnalysisProgress, setFileAnalysisProgress] = useState(0);
+
+  const handleFileSelect = (e) => {
+    if (e.target.files && e.target.files[0]) {
+      setSelectedAudioFile(e.target.files[0]);
+    }
+  };
+
+  const handleAnalyzeAudioFile = async () => {
+    if (!selectedAudioFile) return;
+    setIsFileAnalyzing(true);
+    setFileAnalysisProgress(0);
+
+    const activeId = callState.callId || `file-analysis-${Date.now()}`;
+    setCallState((prev) => ({ ...prev, callId: activeId, status: 'ANALYZING' }));
+    setAnalysisId(activeId);
+    setAudioStreamState('ANALYZING AUDIO FILE');
+
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+      connectWebSocket(activeId);
+      await new Promise((res) => setTimeout(res, 400));
+    }
+
+    try {
+      const arrayBuffer = await selectedAudioFile.arrayBuffer();
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      const audioCtx = new AudioCtx();
+      const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+
+      const channelData = audioBuffer.getChannelData(0);
+      const nativeSr = audioBuffer.sampleRate;
+      const targetSr = 16000;
+      const downsampled = downsampleBuffer(channelData, nativeSr, targetSr);
+
+      const chunkSamples = 40000; // 2.5s at 16kHz
+      const totalWindows = Math.max(1, Math.floor(downsampled.length / chunkSamples));
+
+      console.info(`[AUDIO-FILE-START] name=${selectedAudioFile.name} duration=${audioBuffer.duration.toFixed(2)}s sample_rate=${nativeSr} downsampled_samples=${downsampled.length} total_windows=${totalWindows}`);
+
+      for (let w = 0; w < totalWindows; w++) {
+        const slice = downsampled.slice(w * chunkSamples, (w + 1) * chunkSamples);
+        let sum = 0;
+        for (let i = 0; i < slice.length; i++) sum += slice[i] * slice[i];
+        const rms = Math.sqrt(sum / (slice.length || 1));
+
+        setIsMicActive(true);
+        setRmsVolume(rms);
+
+        const wavBuffer = encodeWav(slice, targetSr);
+
+        console.info(`[AUDIO-RECEIVED]\ncall_id=${activeId}\nbytes=${wavBuffer.byteLength}\nsamples=${slice.length}\nrms=${rms.toFixed(4)}`);
+        console.info(`[AUDIO-WINDOW]\ncall_id=${activeId}\nwindow=${w + 1}\nsamples=40000`);
+
+        if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+          wsRef.current.send(wavBuffer);
+        }
+
+        setFileAnalysisProgress(Math.round(((w + 1) / totalWindows) * 100));
+        await new Promise((res) => setTimeout(res, 250));
+      }
+
+      setAudioStreamState('FILE ANALYSIS COMPLETE');
+      setIsMicActive(false);
+      setRmsVolume(0);
+    } catch (err) {
+      console.error('[AUDIO-FILE-ERROR] Failed to analyze file:', err);
+      alert('Error analyzing audio file: ' + err.message);
+    } finally {
+      setIsFileAnalyzing(false);
+    }
+  };
+
   // Global QA Simulation Test State (Synchronized with Root App & Backend Database)
   const [qaState, setQaState] = useState(globalQAState || { enabled: false, scenario: 'HIGH' });
 
@@ -901,6 +976,47 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId, globalQA
         </div>
       </div>
 
+      {/* Manual Audio File Analyzer Card (Standalone / Offline Capable) */}
+      <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm space-y-3">
+        <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+          <div className="flex items-center gap-2">
+            <div className="p-1.5 bg-emerald-50 text-emerald-700 rounded-lg border border-emerald-200">
+              <FileText className="w-4 h-4" />
+            </div>
+            <div>
+              <h3 className="text-xs font-bold text-slate-900 tracking-tight flex items-center gap-2">
+                MANUAL AUDIO FILE ANALYZER
+                <span className="text-[10px] font-mono font-bold bg-emerald-50 text-emerald-800 border border-emerald-200 px-2 py-0.5 rounded">
+                  STANDALONE / NO CALL REQUIRED
+                </span>
+              </h3>
+              <p className="text-[11px] text-slate-500">Upload audio (.wav, .mp3, .mpeg, .m4a, .aac, WhatsApp Audio) to run Voice Authenticity Engine analysis</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex flex-col sm:flex-row items-center gap-3">
+          <input
+            type="file"
+            accept="audio/*"
+            onChange={handleFileSelect}
+            className="text-xs font-mono text-slate-700 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-slate-100 file:text-slate-800 hover:file:bg-slate-200 cursor-pointer flex-1"
+          />
+          <button
+            onClick={handleAnalyzeAudioFile}
+            disabled={!selectedAudioFile || isFileAnalyzing}
+            className={`px-5 py-2 rounded-lg text-xs font-bold transition shadow-sm flex items-center gap-2 ${
+              !selectedAudioFile || isFileAnalyzing
+                ? 'bg-slate-200 text-slate-400 cursor-not-allowed'
+                : 'bg-emerald-600 hover:bg-emerald-700 text-white'
+            }`}
+          >
+            <Play className="w-3.5 h-3.5 fill-current" />
+            {isFileAnalyzing ? `ANALYZING (${fileAnalysisProgress}%)...` : 'ANALYZE AUDIO'}
+          </button>
+        </div>
+      </div>
+
       {/* Main 2-Column Console Layout */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         {/* Left Column: Call Identity & Audio Waveform Stream */}
@@ -960,7 +1076,7 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId, globalQA
               <canvas ref={canvasRef} width={400} height={100} className="w-full h-full" />
               {!isMicActive && (
                 <div className="absolute inset-0 flex items-center justify-center bg-slate-950/70 backdrop-blur-[1px] text-slate-400 text-xs font-medium">
-                  Awaiting live call stream from System 1...
+                  Audio standby · Choose audio file above or start System 1 call
                 </div>
               )}
             </div>
