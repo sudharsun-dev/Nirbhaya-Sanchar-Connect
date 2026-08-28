@@ -42,25 +42,22 @@ async def test_analysis_start_and_risk_endpoints():
         assert "analysis_id" in start_data
         analysis_id = start_data["analysis_id"]
 
-        # Post audio chunk
-        audio_payload = b"\x00" * 32000 # 1 sec silent pcm
+        # Confirm legacy HTTP audio endpoint is permanently 404 (WebSocket-only live audio)
+        audio_payload = b"\x00" * 32000
         files = {"file": ("chunk.wav", audio_payload, "audio/wav")}
-        data = {"window_index": 1, "transcript_override": "Transfer ₹5,00,000 immediately."}
-
+        data = {"window_index": 1}
         audio_resp = await ac.post(f"/api/v1/analysis/{analysis_id}/audio", files=files, data=data)
-        assert audio_resp.status_code == 200
-        audio_data = audio_resp.json()
-        assert audio_data["analysis_id"] == analysis_id
-        assert audio_data["risk_score"] > 0.0
+        assert audio_resp.status_code == 404
 
-        # Get risk
-        risk_resp = await ac.get(f"/api/v1/analysis/{analysis_id}/risk")
-        assert risk_resp.status_code == 200
-        risk_data = risk_resp.json()
-        assert risk_data["analysis_id"] == analysis_id
-
-        # Get explanation
+        # Fresh session before streaming audio has no risk evaluations yet
         exp_resp = await ac.get(f"/api/v1/analysis/{analysis_id}/explanation")
-        assert exp_resp.status_code == 200
-        exp_data = exp_resp.json()
-        assert "signals_breakdown" in exp_data
+        assert exp_resp.status_code == 404
+
+        # Test policy engine direct evaluation
+        from app.services.policy.policy_engine import policy_engine
+        pol_out = policy_engine.evaluate(
+            risk_output={"risk_score": 85.0, "risk_level": "HIGH", "reasons": ["Synthetic voice detected"]},
+            profile_name="BANK"
+        )
+        assert pol_out["recommended_action"] in ["HOLD", "HOLD & INDEPENDENTLY VERIFY"]
+        assert pol_out["verification_required"] is True

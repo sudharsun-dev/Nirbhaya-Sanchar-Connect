@@ -4,7 +4,22 @@ import {
   Play, Square, CheckCircle2, RefreshCw, AlertTriangle, ShieldCheck,
   Radio, Clock, Database, ChevronRight, Activity, FileText
 } from 'lucide-react';
-import { startAnalysis, sendAudioChunk, requestVerification, resolveWsBase, API_BASE } from '../services/api';
+import { startAnalysis, requestVerification, resolveWsBase, API_BASE } from '../services/api';
+
+function formatScore(val, digits = 1) {
+  if (val === null || val === undefined || isNaN(Number(val))) return null;
+  return Number(val).toFixed(digits);
+}
+
+function formatPercent(val, digits = 1) {
+  if (val === null || val === undefined || isNaN(Number(val))) return null;
+  return Number(val).toFixed(digits);
+}
+
+function formatConfidence(val) {
+  if (val === null || val === undefined || isNaN(Number(val))) return null;
+  return (Number(val) * 100).toFixed(0);
+}
 
 /**
  * Encodes raw Float32 samples into a standard 16-bit mono PCM WAV ArrayBuffer.
@@ -89,6 +104,7 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId }) {
   const wsRef = useRef(null);
   const timerRef = useRef(null);
   const currentSubscribedCallIdRef = useRef(null);
+  const pendingAudioQueueRef = useRef([]);
 
   // Connect to System 2 WebSocket for the current analysis session
   const connectWebSocket = useCallback((targetId) => {
@@ -109,12 +125,26 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId }) {
     socket.onopen = () => {
       console.info(`[SYSTEM 2] WebSocket connected for session ${targetId}`);
       setAudioStreamState('AUDIO RECEIVING');
+
+      // Flush queued audio chunks if any were captured during handshake
+      if (pendingAudioQueueRef.current && pendingAudioQueueRef.current.length > 0) {
+        console.info(`[SYSTEM 2] Flushing ${pendingAudioQueueRef.current.length} queued audio chunks for call_id=${targetId}`);
+        while (pendingAudioQueueRef.current.length > 0) {
+          const chunk = pendingAudioQueueRef.current.shift();
+          try {
+            socket.send(chunk);
+            console.info(`[CLIENT-WS-SEND] analysis_id=${targetId} binary=true bytes=${chunk.byteLength} flushed=true`);
+          } catch (err) {
+            console.warn('[SYSTEM 2] Failed to flush queued audio chunk', err);
+          }
+        }
+      }
     };
 
     socket.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
-        console.info(`[UI-EVENT] call_id=${targetId} event=${data.event}`, data);
+        console.info(`[UI-WS-RECEIVE] event=${data.event} analysis_id=${targetId} window_index=${data.window_index || 0} risk_score=${data.risk_score} synthetic_probability=${data.synthetic_probability}`, data);
         if (data.event === 'ANALYSIS_STARTED') {
           setAudioStreamState('AUDIO RECEIVING');
         } else if (data.event === 'AUDIO_PROCESSED') {
@@ -368,15 +398,19 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId }) {
           pcmBuffer = pcmBuffer.slice(samplesPerChunk);
 
           const wavBuffer = encodeWav(chunk, targetSampleRate);
+          console.info(`[CLIENT-AUDIO] sample_rate=16000 channels=1 samples=${chunk.length} duration_ms=2500 bytes=${wavBuffer.byteLength} rms=${rms.toFixed(4)} speech_detected=${rms > 0.005}`);
           console.info(`[AUDIO-TAP] call_id=${activeId} chunk=${windowCount} sample_rate=16000 channels=1 bytes=${wavBuffer.byteLength} rms=${rms.toFixed(4)}`);
 
           if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
             wsRef.current.send(wavBuffer);
+            console.info(`[CLIENT-WS-SEND] analysis_id=${activeId} binary=true bytes=${wavBuffer.byteLength}`);
             setAudioStreamState('AUDIO RECEIVING');
           } else {
-            // Fallback HTTP POST
-            const blob = new Blob([wavBuffer], { type: 'audio/wav' });
-            sendAudioChunk(activeId, blob, windowCount).catch(() => {});
+            // Buffer audio chunks until WebSocket is fully OPEN (Never call HTTP /audio)
+            console.info(`[SYSTEM 2] WebSocket buffering, queueing audio chunk #${windowCount} for call_id=${activeId}`);
+            if (pendingAudioQueueRef.current.length < 10) {
+              pendingAudioQueueRef.current.push(wavBuffer);
+            }
           }
         }
       };
@@ -396,6 +430,7 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId }) {
     setRmsVolume(0);
     setAudioStreamState('ANALYSIS COMPLETE');
     setCallState((prev) => ({ ...prev, status: 'IDLE' }));
+    pendingAudioQueueRef.current = [];
 
     if (mediaStreamRef.current) {
       mediaStreamRef.current.getTracks().forEach((track) => track.stop());
@@ -570,12 +605,12 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId }) {
               <div className="bg-slate-800/80 p-2 rounded border border-slate-700/60">
                 <p className="text-slate-400">AUDIO QUALITY</p>
                 <p className="font-bold text-slate-200">
-                  {riskData.audioQuality != null ? `${(riskData.audioQuality * 100).toFixed(0)}%` : '—'}
+                  {formatPercent(riskData.audioQuality != null ? riskData.audioQuality * 100 : null, 0) ? `${formatPercent(riskData.audioQuality * 100, 0)}%` : '—'}
                 </p>
               </div>
               <div className="bg-slate-800/80 p-2 rounded border border-slate-700/60">
                 <p className="text-slate-400">WINDOWS</p>
-                <p className="font-bold text-slate-200">{riskData.windowsAnalyzed}</p>
+                <p className="font-bold text-slate-200">{riskData.windowsAnalyzed || 0}</p>
               </div>
             </div>
           </div>
@@ -604,11 +639,11 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId }) {
               <div className="bg-slate-50 rounded-xl p-4 border border-slate-200 text-center">
                 <p className="text-xs font-bold text-slate-500 uppercase">RISK SCORE</p>
                 <p className={`text-3xl font-extrabold mt-1 font-mono ${
-                  riskData.riskScore == null ? 'text-slate-400' :
-                  riskData.riskScore >= 70 ? 'text-rose-600' :
-                  riskData.riskScore >= 30 ? 'text-amber-600' : 'text-emerald-600'
+                  formatScore(riskData.riskScore, 1) === null ? 'text-slate-400' :
+                  Number(riskData.riskScore) >= 70 ? 'text-rose-600' :
+                  Number(riskData.riskScore) >= 30 ? 'text-amber-600' : 'text-emerald-600'
                 }`}>
-                  {riskData.riskScore != null ? `${riskData.riskScore.toFixed(1)} / 100` : '—'}
+                  {formatScore(riskData.riskScore, 1) !== null ? `${formatScore(riskData.riskScore, 1)} / 100` : '—'}
                 </p>
               </div>
 
@@ -660,19 +695,19 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId }) {
                 <div className="flex justify-between">
                   <span className="text-slate-500">Synthetic Probability</span>
                   <span className="font-mono font-bold text-slate-900">
-                    {riskData.syntheticProbability != null ? `${riskData.syntheticProbability.toFixed(1)}%` : '—'}
+                    {formatPercent(riskData.syntheticProbability, 1) !== null ? `${formatPercent(riskData.syntheticProbability, 1)}%` : '—'}
                   </span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-slate-500">Voice Authenticity</span>
                   <span className="font-mono font-bold text-slate-900">
-                    {riskData.voiceAuthenticity != null ? `${riskData.voiceAuthenticity.toFixed(1)}%` : '—'}
+                    {formatPercent(riskData.voiceAuthenticity, 1) !== null ? `${formatPercent(riskData.voiceAuthenticity, 1)}%` : '—'}
                   </span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-slate-500">Model Confidence</span>
                   <span className="font-mono text-slate-800">
-                    {riskData.overallConfidence != null ? `${(riskData.overallConfidence * 100).toFixed(0)}%` : '—'}
+                    {formatConfidence(riskData.overallConfidence) !== null ? `${formatConfidence(riskData.overallConfidence)}%` : '—'}
                   </span>
                 </div>
                 <div className="flex justify-between border-t border-slate-100 pt-2">
@@ -694,14 +729,14 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId }) {
                 <div className="flex justify-between">
                   <span className="text-slate-500">Speaker Match Similarity</span>
                   <span className="font-mono font-bold text-slate-900">
-                    {riskData.speakerSimilarity != null ? `${riskData.speakerSimilarity.toFixed(1)}%` : 'NO REFERENCE'}
+                    {formatPercent(riskData.speakerSimilarity, 1) !== null ? `${formatPercent(riskData.speakerSimilarity, 1)}%` : 'NO REFERENCE'}
                   </span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-slate-500">Identity Status</span>
                   <span className="font-bold text-slate-700">
                     {riskData.speakerSimilarity != null
-                      ? riskData.speakerSimilarity >= 70 ? 'MATCH' : 'MISMATCH'
+                      ? Number(riskData.speakerSimilarity) >= 70 ? 'MATCH' : 'MISMATCH'
                       : 'NO REFERENCE'}
                   </span>
                 </div>
@@ -744,13 +779,13 @@ export default function LiveCallUI({ onOpenWhyThisScore, initialCallId }) {
                     <td className="px-6 py-3 font-mono text-slate-500">{row.timestamp}</td>
                     <td className="px-6 py-3 font-mono font-bold text-slate-700">#{row.windowIndex}</td>
                     <td className="px-6 py-3 font-mono text-slate-900">
-                      {row.syntheticProbability != null ? `${row.syntheticProbability.toFixed(1)}%` : '—'}
+                      {formatPercent(row.syntheticProbability, 1) !== null ? `${formatPercent(row.syntheticProbability, 1)}%` : '—'}
                     </td>
                     <td className="px-6 py-3 font-mono text-slate-700">
-                      {row.modelConfidence != null ? `${(row.modelConfidence * 100).toFixed(0)}%` : '—'}
+                      {formatConfidence(row.modelConfidence) !== null ? `${formatConfidence(row.modelConfidence)}%` : '—'}
                     </td>
                     <td className="px-6 py-3 font-mono font-bold text-slate-900">
-                      {row.riskScore != null ? row.riskScore.toFixed(1) : '—'}
+                      {formatScore(row.riskScore, 1) !== null ? formatScore(row.riskScore, 1) : '—'}
                     </td>
                     <td className="px-6 py-3">
                       <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${

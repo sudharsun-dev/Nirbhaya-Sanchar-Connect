@@ -89,194 +89,269 @@ async def websocket_analysis_endpoint(websocket: WebSocket, analysis_id: str):
                 print(f"[S2-AUDIO-RECEIVED] call_id={analysis_id} window={window_index} bytes={len(audio_bytes)} timestamp={start_pipeline_time}")
                 print(f"[AUDIO-RECEIVED] call_id={analysis_id} bytes={len(audio_bytes)} timestamp={start_pipeline_time}")
 
+                # 1. Audio Preprocessing & VAD
                 try:
-                    # 1. Process pipeline (in-memory)
                     processed_audio = preprocessor.process_audio_bytes(audio_bytes)
-                    samples_count = processed_audio['tensor'].shape[-1] if 'tensor' in processed_audio and hasattr(processed_audio['tensor'], 'shape') else len(audio_bytes) // 2
-                    print(f"[S2-AUDIO-DECODE] call_id={analysis_id} window={window_index} sample_rate={processed_audio['sample_rate']} channels={processed_audio['channels']} samples={samples_count} duration={processed_audio['duration_ms']} rms={processed_audio['rms_energy']}")
-                    print(f"[AUDIO-DECODE] call_id={analysis_id} sample_rate={processed_audio['sample_rate']} channels={processed_audio['channels']} samples={samples_count} duration={processed_audio['duration_ms']} rms={processed_audio['rms_energy']}")
-                    print(f"[S2-VAD] call_id={analysis_id} window={window_index} rms={processed_audio['rms_energy']} speech_detected={processed_audio['speech_detected']}")
-                    print(f"[VAD] call_id={analysis_id} rms={processed_audio['rms_energy']} speech_detected={processed_audio['speech_detected']}")
+                except Exception as prep_err:
+                    print(f"[AUDIO-DECODE-ERROR] call_id={analysis_id} window={window_index} error={prep_err}")
+                    continue
 
+                tensor = processed_audio.get("tensor")
+                samples_count = tensor.shape[-1] if tensor is not None and hasattr(tensor, "shape") else len(audio_bytes) // 2
+                sr = processed_audio.get("sample_rate", 16000)
+                ch = processed_audio.get("channels", 1)
+                dur_ms = processed_audio.get("duration_ms", 2500.0)
+                rms = processed_audio.get("rms_energy", 0.0)
+                vad = processed_audio.get("speech_detected", True)
+
+                print(f"[S2-AUDIO-DECODE] call_id={analysis_id} window={window_index} sample_rate={sr} channels={ch} samples={samples_count} duration={dur_ms} rms={rms}")
+                print(f"[AUDIO-DECODE] sample_rate={sr} channels={ch} samples={samples_count} duration_ms={dur_ms} rms={rms}")
+                print(f"[S2-VAD] call_id={analysis_id} window={window_index} rms={rms} speech_detected={vad}")
+                print(f"[VAD] speech_detected={vad} rms={rms}")
+
+                # 2. AASIST Voice Authenticity Inference (Independent)
+                voice_res = None
+                try:
                     print(f"[S2-AASIST-START] call_id={analysis_id} window={window_index} samples={samples_count}")
-                    print(f"[AASIST-START] call_id={analysis_id} samples={samples_count}")
+                    print(f"[AASIST-INPUT] shape={list(tensor.shape) if tensor is not None else []} dtype={str(tensor.dtype) if tensor is not None else 'unknown'} device={str(tensor.device) if tensor is not None else 'cpu'} sample_rate={sr} samples={samples_count}")
                     voice_res = voice_authenticity_engine.analyze_audio(processed_audio)
                     print(f"[S2-AASIST-RESULT] call_id={analysis_id} window={window_index} status={voice_res.get('status')} synthetic_probability={voice_res.get('synthetic_probability')} authenticity_score={voice_res.get('authenticity_score')} confidence={voice_res.get('confidence')}")
-                    print(f"[AASIST-RESULT] call_id={analysis_id} spoof_logit={voice_res.get('spoof_logit')} bonafide_logit={voice_res.get('bonafide_logit')} synthetic_probability={voice_res.get('synthetic_probability')} authenticity_probability={voice_res.get('authenticity_score')} confidence={voice_res.get('confidence')}")
-
-                    speaker_res = speaker_verifier.compare_speaker(processed_audio)
-                    asr_res = await asr_engine.transcribe(audio_bytes)
-                    context_res = context_engine.analyze_text(asr_res.get("text", ""))
-                    behavior_res = behavior_engine.analyze_behavior(processed_audio, text_transcript=asr_res.get("text", ""))
-
-                    # 2. Calculate Deterministic Risk & Policy
-                    risk_output = risk_engine.compute_risk(
-                        voice_result=voice_res,
-                        speaker_result=speaker_res,
-                        context_result=context_res,
-                        transaction_result=None,
-                        behavior_result=behavior_res
-                    )
-
-                    policy_output = policy_engine.evaluate(risk_output=risk_output, profile_name="BANK")
-                    pipeline_latency_ms = round((time.time() - start_pipeline_time) * 1000, 2)
-
-                    print(f"[S2-RISK-RESULT] call_id={analysis_id} window={window_index} risk_score={risk_output.get('risk_score')} risk_level={risk_output.get('risk_level')} action={policy_output.get('recommended_action')} synthetic_probability={risk_output.get('synthetic_probability')}")
-                    print(f"[RISK-ENGINE] call_id={analysis_id} synthetic_probability={risk_output.get('synthetic_probability')} speaker_score={risk_output.get('speaker_similarity')} context_score={risk_output.get('context_score')} behavior_score={risk_output.get('behavior_score')} risk_score={risk_output.get('risk_score')} risk_level={risk_output.get('risk_level')} action={policy_output.get('recommended_action')}")
-
-                    # 3. Broadcast AUDIO_PROCESSED
-                    await manager.broadcast_event(analysis_id, {
-                        "event": "AUDIO_PROCESSED",
-                        "analysis_id": analysis_id,
-                        "window_index": window_index,
-                        "duration_ms": processed_audio["duration_ms"],
-                        "speech_detected": processed_audio["speech_detected"],
-                        "audio_quality_score": processed_audio["audio_quality_score"],
-                        "processing_latency_ms": pipeline_latency_ms
-                    })
-
-                    # 4. Broadcast RISK_UPDATED
-                    risk_event_payload = {
-                        "event": "RISK_UPDATED",
-                        "analysis_id": analysis_id,
-                        "window_index": window_index,
-                        "risk_score": risk_output["risk_score"],
-                        "risk_level": risk_output["risk_level"],
-                        "overall_confidence": risk_output["overall_confidence"],
-                        "synthetic_probability": risk_output["synthetic_probability"],
-                        "speaker_similarity": risk_output["speaker_similarity"],
-                        "context_score": risk_output["context_score"],
-                        "reasons": risk_output["reasons"],
-                        "recommended_action": policy_output["recommended_action"],
-                        "processing_latency_ms": pipeline_latency_ms
+                    print(f"[AASIST-OUTPUT] raw_output={{'spoof': {voice_res.get('spoof_logit')}, 'bonafide': {voice_res.get('bonafide_logit')}}} synthetic_probability={voice_res.get('synthetic_probability')} authenticity_score={voice_res.get('authenticity_score')} confidence={voice_res.get('confidence')}")
+                except Exception as aasist_err:
+                    print(f"[AASIST-ERROR] call_id={analysis_id} window={window_index} error={aasist_err}")
+                    voice_res = {
+                        "status": "ERROR",
+                        "synthetic_probability": None,
+                        "authenticity_score": None,
+                        "confidence": 0.0,
+                        "audio_quality": processed_audio.get("audio_quality_score", 1.0),
+                        "model_name": settings.VOICE_MODEL_NAME,
+                        "model_version": settings.VOICE_MODEL_VERSION,
+                        "weights_loaded": voice_authenticity_engine.weights_loaded,
+                        "status_detail": str(aasist_err)
                     }
-                    print(f"[S2-TELEMETRY-BROADCAST] call_id={analysis_id} window={window_index} synthetic_probability={risk_output['synthetic_probability']} risk_score={risk_output['risk_score']} risk_level={risk_output['risk_level']} action={policy_output['recommended_action']}")
-                    print(f"[TELEMETRY-SEND] call_id={analysis_id} event=RISK_UPDATED risk_score={risk_output['risk_score']} risk_level={risk_output['risk_level']} synthetic_probability={risk_output['synthetic_probability']} confidence={risk_output['overall_confidence']}")
-                    await manager.broadcast_event(analysis_id, risk_event_payload)
 
-                    # 5. Broadcast POLICY_UPDATED
+                # 3. Speaker Verification (Independent)
+                speaker_res = None
+                try:
+                    speaker_res = speaker_verifier.compare_speaker(processed_audio)
+                except Exception as spk_err:
+                    logger.warn(f"[SPEAKER ERROR] {spk_err}")
+                    speaker_res = {
+                        "identity_status": "UNKNOWN",
+                        "similarity_score": None,
+                        "confidence": 0.0,
+                        "status": "SPEAKER_UNAVAILABLE"
+                    }
+
+                # 4. ASR Speech-To-Text (Independent)
+                asr_res = None
+                try:
+                    asr_res = await asr_engine.transcribe(audio_bytes)
+                except Exception as asr_err:
+                    logger.warn(f"[ASR ERROR] {asr_err}")
+                    asr_res = {
+                        "text": None,
+                        "language": "en",
+                        "confidence": 0.0,
+                        "status": "ASR_UNAVAILABLE"
+                    }
+
+                # 5. Context Intelligence (Independent)
+                context_res = None
+                try:
+                    context_res = context_engine.analyze_text(asr_res.get("text", "") if asr_res else "")
+                except Exception as ctx_err:
+                    logger.warn(f"[CONTEXT ERROR] {ctx_err}")
+                    context_res = {
+                        "context_score": 0.0,
+                        "urgency_level": "NORMAL",
+                        "suspicious_phrases": [],
+                        "risk_flags": []
+                    }
+
+                # 6. Behavioral Signals (Independent)
+                behavior_res = None
+                try:
+                    behavior_res = behavior_engine.analyze_behavior(processed_audio, text_transcript=asr_res.get("text", "") if asr_res else "")
+                except Exception as beh_err:
+                    logger.warn(f"[BEHAVIOR ERROR] {beh_err}")
+                    behavior_res = {
+                        "behavior_score": 0.0,
+                        "anomalies": []
+                    }
+
+                # 7. Deterministic Risk & Policy Computation
+                synth_val = voice_res.get("synthetic_probability") if voice_res else None
+                spk_val = speaker_res.get("similarity_score") if speaker_res else None
+                ctx_val = context_res.get("context_score", 0.0) if context_res else 0.0
+                beh_val = behavior_res.get("behavior_score", 0.0) if behavior_res else 0.0
+
+                print(f"[RISK-INPUT] synthetic_probability={synth_val} speaker_similarity={spk_val} context_score={ctx_val} behavior_score={beh_val} transaction_score=None")
+                risk_output = risk_engine.compute_risk(
+                    voice_result=voice_res,
+                    speaker_result=speaker_res,
+                    context_result=context_res,
+                    transaction_result=None,
+                    behavior_result=behavior_res
+                )
+                policy_output = policy_engine.evaluate(risk_output=risk_output, profile_name="BANK")
+                pipeline_latency_ms = round((time.time() - start_pipeline_time) * 1000, 2)
+
+                print(f"[S2-RISK-RESULT] call_id={analysis_id} window={window_index} risk_score={risk_output.get('risk_score')} risk_level={risk_output.get('risk_level')} action={policy_output.get('recommended_action')} synthetic_probability={risk_output.get('synthetic_probability')}")
+                print(f"[RISK-OUTPUT] risk_score={risk_output.get('risk_score')} risk_level={risk_output.get('risk_level')} overall_confidence={risk_output.get('overall_confidence')}")
+                print(f"[RISK-ENGINE] call_id={analysis_id} synthetic_probability={risk_output.get('synthetic_probability')} speaker_score={risk_output.get('speaker_similarity')} context_score={risk_output.get('context_score')} behavior_score={risk_output.get('behavior_score')} risk_score={risk_output.get('risk_score')} risk_level={risk_output.get('risk_level')} action={policy_output.get('recommended_action')}")
+
+                # 8. Broadcast AUDIO_PROCESSED
+                await manager.broadcast_event(analysis_id, {
+                    "event": "AUDIO_PROCESSED",
+                    "analysis_id": analysis_id,
+                    "window_index": window_index,
+                    "duration_ms": processed_audio["duration_ms"],
+                    "speech_detected": processed_audio["speech_detected"],
+                    "audio_quality_score": processed_audio["audio_quality_score"],
+                    "processing_latency_ms": pipeline_latency_ms
+                })
+
+                # 9. Broadcast RISK_UPDATED
+                risk_event_payload = {
+                    "event": "RISK_UPDATED",
+                    "analysis_id": analysis_id,
+                    "window_index": window_index,
+                    "risk_score": risk_output["risk_score"],
+                    "risk_level": risk_output["risk_level"],
+                    "overall_confidence": risk_output["overall_confidence"],
+                    "synthetic_probability": risk_output["synthetic_probability"],
+                    "speaker_similarity": risk_output["speaker_similarity"],
+                    "context_score": risk_output["context_score"],
+                    "reasons": risk_output["reasons"],
+                    "recommended_action": policy_output["recommended_action"],
+                    "processing_latency_ms": pipeline_latency_ms
+                }
+                print(f"[S2-TELEMETRY-BROADCAST] call_id={analysis_id} window={window_index} synthetic_probability={risk_output['synthetic_probability']} risk_score={risk_output['risk_score']} risk_level={risk_output['risk_level']} action={policy_output['recommended_action']}")
+                print(f"[TELEMETRY-SEND] analysis_id={analysis_id} window={window_index} risk_score={risk_output['risk_score']} synthetic_probability={risk_output['synthetic_probability']} risk_level={risk_output['risk_level']} action={policy_output['recommended_action']}")
+                await manager.broadcast_event(analysis_id, risk_event_payload)
+
+                # 10. Broadcast POLICY_UPDATED
+                await manager.broadcast_event(analysis_id, {
+                    "event": "POLICY_UPDATED",
+                    "analysis_id": analysis_id,
+                    "recommended_action": policy_output["recommended_action"],
+                    "verification_required": policy_output["verification_required"],
+                    "reasons": policy_output["reasons"]
+                })
+
+                # 11. Broadcast ALERT_CREATED if HIGH risk
+                if risk_output["risk_level"] == "HIGH":
+                    sec_msg = bank_policy_adapter.format_system1_message(risk_output, policy_output)
                     await manager.broadcast_event(analysis_id, {
-                        "event": "POLICY_UPDATED",
+                        "event": "ALERT_CREATED",
                         "analysis_id": analysis_id,
-                        "recommended_action": policy_output["recommended_action"],
-                        "verification_required": policy_output["verification_required"],
-                        "reasons": policy_output["reasons"]
+                        "alert_level": "HIGH",
+                        "security_message": sec_msg,
+                        "recommended_action": "HOLD & INDEPENDENTLY VERIFY"
                     })
 
-                    # 6. Broadcast ALERT_CREATED if HIGH risk
-                    if risk_output["risk_level"] == "HIGH":
-                        sec_msg = bank_policy_adapter.format_system1_message(risk_output, policy_output)
-                        await manager.broadcast_event(analysis_id, {
-                            "event": "ALERT_CREATED",
-                            "analysis_id": analysis_id,
-                            "alert_level": "HIGH",
-                            "security_message": sec_msg,
-                            "recommended_action": "HOLD & INDEPENDENTLY VERIFY"
-                        })
+                # 12. Asynchronously Trigger System 1 Server Callback (Non-blocking)
+                try:
+                    cb_res = await callback_service.send_callback(
+                        event="RISK_UPDATED",
+                        call_id=analysis_id,
+                        analysis_id=analysis_id,
+                        risk_output=risk_output,
+                        policy_output=policy_output,
+                        verification_required=policy_output["verification_required"]
+                    )
+                    print(f"[CALLBACK] status={cb_res.get('status')} HTTP={cb_res.get('http_status')} error={cb_res.get('error')}")
+                except Exception as cb_err:
+                    print(f"[CALLBACK] status=FAILED HTTP=None error={cb_err}")
 
-                    # 7. Asynchronously Trigger System 1 Server Callback
-                    try:
-                        await callback_service.send_callback(
-                            event="RISK_UPDATED",
-                            call_id=analysis_id,
-                            analysis_id=analysis_id,
-                            risk_output=risk_output,
-                            policy_output=policy_output,
-                            verification_required=policy_output["verification_required"]
-                        )
-                    except Exception as cb_err:
-                        logger.warn(f"[CALLBACK ERROR] Failed callback to System 1: {cb_err}")
-
-                    # 8. Persist Telemetry Metadata to DB safely
-                    try:
-                        async with AsyncSessionLocal() as db:
-                            call_res = await db.execute(select(Call).where(Call.id == analysis_id))
-                            call_obj = call_res.scalars().first()
-                            if not call_obj:
-                                call_obj = Call(
-                                    id=analysis_id,
-                                    caller_id="caller_stream",
-                                    receiver_id="receiver_stream",
-                                    channel="VOIP",
-                                    status="ACTIVE"
-                                )
-                                db.add(call_obj)
-                                await db.flush()
-
-                            session_res = await db.execute(
-                                select(AnalysisSession).where((AnalysisSession.id == analysis_id) | (AnalysisSession.call_id == analysis_id))
+                # 13. Persist Telemetry Metadata to DB safely (Non-blocking)
+                try:
+                    async with AsyncSessionLocal() as db:
+                        call_res = await db.execute(select(Call).where(Call.id == analysis_id))
+                        call_obj = call_res.scalars().first()
+                        if not call_obj:
+                            call_obj = Call(
+                                id=analysis_id,
+                                caller_id="caller_stream",
+                                receiver_id="receiver_stream",
+                                channel="VOIP",
+                                status="ACTIVE"
                             )
-                            session_obj = session_res.scalars().first()
-                            if not session_obj:
-                                session_obj = AnalysisSession(
-                                    id=analysis_id,
-                                    call_id=call_obj.id,
-                                    caller_id=call_obj.caller_id,
-                                    receiver_id=call_obj.receiver_id,
-                                    status="PROCESSING"
-                                )
-                                db.add(session_obj)
-                                await db.flush()
-                            else:
-                                session_obj.status = "PROCESSING"
-
-                            window_rec = AudioAnalysisWindow(
-                                id=str(uuid.uuid4()),
-                                analysis_id=session_obj.id,
-                                window_index=window_index,
-                                duration_ms=processed_audio.get("duration_ms", 2500.0),
-                                sample_rate=processed_audio.get("sample_rate", 16000),
-                                channels=processed_audio.get("channels", 1),
-                                speech_detected=processed_audio.get("speech_detected", True),
-                                audio_quality_score=processed_audio.get("audio_quality_score", 1.0)
-                            )
-                            db.add(window_rec)
+                            db.add(call_obj)
                             await db.flush()
 
-                            voice_rec = VoiceAnalysisResult(
-                                analysis_id=session_obj.id,
-                                window_id=window_rec.id,
-                                synthetic_probability=voice_res.get("synthetic_probability"),
-                                authenticity_score=voice_res.get("authenticity_score"),
-                                confidence=voice_res.get("confidence", 0.0),
-                                audio_quality=voice_res.get("audio_quality", 1.0),
-                                model_name=voice_res.get("model_name", settings.VOICE_MODEL_NAME),
-                                model_version=voice_res.get("model_version", settings.VOICE_MODEL_VERSION),
-                                inference_time_ms=voice_res.get("inference_time_ms", 0.0),
-                                status=voice_res.get("status", "SUCCESS")
+                        session_res = await db.execute(
+                            select(AnalysisSession).where((AnalysisSession.id == analysis_id) | (AnalysisSession.call_id == analysis_id))
+                        )
+                        session_obj = session_res.scalars().first()
+                        if not session_obj:
+                            session_obj = AnalysisSession(
+                                id=analysis_id,
+                                call_id=call_obj.id,
+                                caller_id=call_obj.caller_id,
+                                receiver_id=call_obj.receiver_id,
+                                status="PROCESSING"
                             )
-                            db.add(voice_rec)
+                            db.add(session_obj)
+                            await db.flush()
+                        else:
+                            session_obj.status = "PROCESSING"
 
-                            risk_rec = RiskScore(
-                                analysis_id=session_obj.id,
-                                risk_score=risk_output.get("risk_score", 0.0),
-                                risk_level=risk_output.get("risk_level", "LOW"),
-                                overall_confidence=risk_output.get("overall_confidence", 0.0),
-                                synthetic_probability=risk_output.get("synthetic_probability"),
-                                speaker_similarity=risk_output.get("speaker_similarity"),
-                                context_score=risk_output.get("context_score"),
-                                transaction_score=risk_output.get("transaction_score"),
-                                behavior_score=risk_output.get("behavior_score"),
-                                reasons=risk_output.get("reasons", [])
-                            )
-                            db.add(risk_rec)
+                        window_rec = AudioAnalysisWindow(
+                            id=str(uuid.uuid4()),
+                            analysis_id=session_obj.id,
+                            window_index=window_index,
+                            duration_ms=processed_audio.get("duration_ms", 2500.0),
+                            sample_rate=processed_audio.get("sample_rate", 16000),
+                            channels=processed_audio.get("channels", 1),
+                            speech_detected=processed_audio.get("speech_detected", True),
+                            audio_quality_score=processed_audio.get("audio_quality_score", 1.0)
+                        )
+                        db.add(window_rec)
+                        await db.flush()
 
-                            policy_rec = PolicyDecision(
-                                analysis_id=session_obj.id,
-                                policy_profile=policy_output.get("policy_profile", "BANK"),
-                                recommended_action=policy_output.get("recommended_action", "CONTINUE"),
-                                verification_required=policy_output.get("verification_required", False),
-                                reasons=policy_output.get("reasons", [])
-                            )
-                            db.add(policy_rec)
+                        voice_rec = VoiceAnalysisResult(
+                            analysis_id=session_obj.id,
+                            window_id=window_rec.id,
+                            synthetic_probability=voice_res.get("synthetic_probability") if voice_res else None,
+                            authenticity_score=voice_res.get("authenticity_score") if voice_res else None,
+                            confidence=voice_res.get("confidence", 0.0) if voice_res else 0.0,
+                            audio_quality=voice_res.get("audio_quality", 1.0) if voice_res else 1.0,
+                            model_name=voice_res.get("model_name", settings.VOICE_MODEL_NAME) if voice_res else settings.VOICE_MODEL_NAME,
+                            model_version=voice_res.get("model_version", settings.VOICE_MODEL_VERSION) if voice_res else settings.VOICE_MODEL_VERSION,
+                            inference_time_ms=voice_res.get("inference_time_ms", 0.0) if voice_res else 0.0,
+                            status=voice_res.get("status", "SUCCESS") if voice_res else "ERROR"
+                        )
+                        db.add(voice_rec)
 
-                            await db.commit()
-                    except Exception as db_err:
-                        logger.warn(f"[DB LOG ERROR] Failed to persist window telemetry: {db_err}")
+                        risk_rec = RiskScore(
+                            analysis_id=session_obj.id,
+                            risk_score=risk_output.get("risk_score", 0.0),
+                            risk_level=risk_output.get("risk_level", "LOW"),
+                            overall_confidence=risk_output.get("overall_confidence", 0.0),
+                            synthetic_probability=risk_output.get("synthetic_probability"),
+                            speaker_similarity=risk_output.get("speaker_similarity"),
+                            context_score=risk_output.get("context_score"),
+                            transaction_score=risk_output.get("transaction_score"),
+                            behavior_score=risk_output.get("behavior_score"),
+                            reasons=risk_output.get("reasons", [])
+                        )
+                        db.add(risk_rec)
 
-                except Exception as pipe_err:
-                    print(f"[AASIST-ERROR] call_id={analysis_id} window={window_index} error={pipe_err}")
-                    logger.exception(f"[PIPELINE ERROR] Audio analysis failed for window {window_index}: {pipe_err}")
+                        policy_rec = PolicyDecision(
+                            analysis_id=session_obj.id,
+                            policy_profile=policy_output.get("policy_profile", "BANK"),
+                            recommended_action=policy_output.get("recommended_action", "CONTINUE"),
+                            verification_required=policy_output.get("verification_required", False),
+                            reasons=policy_output.get("reasons", [])
+                        )
+                        db.add(policy_rec)
+
+                        await db.commit()
+                except Exception as db_err:
+                    print(f"[DB-ERROR] Failed to persist window telemetry: {db_err}")
 
             elif "text" in message:
                 text_data = message["text"]

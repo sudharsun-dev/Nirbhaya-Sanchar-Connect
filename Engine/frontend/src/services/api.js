@@ -65,22 +65,6 @@ export async function startAnalysis(callData) {
   return await res.json();
 }
 
-export async function sendAudioChunk(analysisId, blob, windowIndex = 1, transcriptOverride = '') {
-  const formData = new FormData();
-  formData.append('file', blob, 'chunk.wav');
-  formData.append('window_index', String(windowIndex));
-  if (transcriptOverride) {
-    formData.append('transcript_override', transcriptOverride);
-  }
-
-  const res = await fetch(`${API_BASE}/analysis/${analysisId}/audio`, {
-    method: 'POST',
-    body: formData,
-  });
-  if (!res.ok) throw new Error(`Send audio chunk failed with HTTP ${res.status}`);
-  return await res.json();
-}
-
 export async function getAnalysisRisk(analysisId) {
   const res = await fetch(`${API_BASE}/analysis/${analysisId}/risk`);
   if (!res.ok) throw new Error(`Get risk failed with HTTP ${res.status}`);

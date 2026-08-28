@@ -2,6 +2,7 @@ import time
 import math
 import numpy as np
 import torch
+import torchaudio
 import torchaudio.transforms as T
 from app.config import settings
 
