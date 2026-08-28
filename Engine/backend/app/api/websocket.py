@@ -84,9 +84,11 @@ async def websocket_analysis_endpoint(websocket: WebSocket, analysis_id: str):
             if message.get("type") == "websocket.disconnect":
                 break
 
-            if "bytes" in message:
+            audio_bytes = message.get("bytes")
+            text_data = message.get("text")
+
+            if audio_bytes:
                 start_pipeline_time = time.time()
-                audio_bytes = message["bytes"]
                 window_index += 1
                 
                 print(f"[REAL-MIC-BACKEND-RECEIVE] call_id={analysis_id} window_index={window_index} bytes={len(audio_bytes)}")
@@ -378,8 +380,7 @@ async def websocket_analysis_endpoint(websocket: WebSocket, analysis_id: str):
                 except Exception as db_err:
                     print(f"[DB-ERROR] Failed to persist window telemetry: {db_err}")
 
-            elif "text" in message:
-                text_data = message["text"]
+            elif text_data:
                 try:
                     json_msg = json.loads(text_data)
                     if json_msg.get("type") == "PING":
